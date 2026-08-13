@@ -1,0 +1,20 @@
+---
+# For configuration options and examples, please see:
+# https://gethomepage.dev/configs/settings/
+
+providers:
+  openweathermap: openweathermapapikey
+  weatherapi: weatherapiapikey
+
+title: Launchpad
+background:
+  image: https://images.unsplash.com/photo-1628771791803-7ee290de9893?w=3840&h=2160&fit=crop&auto=format&q=80
+  brightness: 50 # 0, 25, 50, 75, 125, 150, etc.
+  opacity: 50 # 25, 50, 75
+  #blur: sm # xs, sm, md, lg, xl, 2xl, 3xl
+  #saturate: 50 # 0, 25, 50, 75
+ 
+theme: dark
+color: slate
+
+hideVersion: true

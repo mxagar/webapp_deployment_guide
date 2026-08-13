@@ -1,0 +1,31 @@
+services:
+
+  ghost:
+    image: ghost:5
+    container_name: ghost
+    restart: unless-stopped
+    ports:
+      - 2368:2368
+    environment:
+      database__client: mysql
+      database__connection__host: db
+      database__connection__user: root
+      database__connection__password: password123
+      database__connection__database: ghost
+      # Change the url to match YOUR domain!
+      url: https://blog.YOUR_DOMAIN
+    volumes:
+      - ghost:/var/lib/ghost/content
+
+  db:
+    image: mysql:8
+    container_name: ghost-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: password123
+    volumes:
+      - db:/var/lib/mysql
+
+volumes:
+  ghost:
+  db:

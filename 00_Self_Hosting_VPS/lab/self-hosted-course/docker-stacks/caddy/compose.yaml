@@ -1,0 +1,16 @@
+services:
+  caddy:
+    image: jasonc/caddy-cloudflare:2
+    container_name: caddy
+    network_mode: host
+    environment:
+      CLOUDFLARE_API_TOKEN: YOUR_TOKEN_HERE
+    volumes:
+      - /opt/docker/caddy/Caddyfile:/etc/caddy/Caddyfile
+      - data:/data
+      - config:/config
+    restart: unless-stopped
+
+volumes:
+  data:
+  config:

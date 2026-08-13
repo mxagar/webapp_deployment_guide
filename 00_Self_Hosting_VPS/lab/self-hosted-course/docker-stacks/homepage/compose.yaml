@@ -1,0 +1,15 @@
+services:
+  homepage:
+    image: ghcr.io/gethomepage/homepage:latest
+    container_name: homepage
+    ports:
+      - 3000:3000
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/docker/homepage/config:/app/config
+    environment:
+      HOMEPAGE_ALLOWED_HOSTS: "*"
+    labels:
+      tsdproxy.enable: true
+      tsdproxy.ephemeral: false
+    restart: unless-stopped

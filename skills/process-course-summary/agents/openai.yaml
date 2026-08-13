@@ -1,0 +1,4 @@
+interface:
+  display_name: "Process Course Summary"
+  short_description: "Clean and summarize existing course README files"
+  default_prompt: "Use $process-course-summary on a course folder containing a poorly formatted README.md."

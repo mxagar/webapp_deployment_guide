@@ -1,0 +1,11 @@
+services:
+  open-port-finder:
+    image: jasonc/open-port-finder:latest
+    container_name: ports
+    network_mode: host
+    labels:
+      tsdproxy.enable: true
+      tsdproxy.ephemeral: false
+      tsdproxy.container_port: "56789"
+    restart: unless-stopped
+

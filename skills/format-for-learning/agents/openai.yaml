@@ -1,0 +1,4 @@
+interface:
+  display_name: "Format for Learning"
+  short_description: "Format tutorial sections cleanly"
+  default_prompt: "Format a named tutorial section from a file into structured Markdown while preserving the original order of text, images, links, and code."

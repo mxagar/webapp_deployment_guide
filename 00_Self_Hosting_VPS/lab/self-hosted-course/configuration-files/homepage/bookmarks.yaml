@@ -1,0 +1,37 @@
+---
+# For configuration options and examples, please see:
+# https://gethomepage.dev/configs/bookmarks
+
+- Network Management:
+    - Tailscale:
+        - icon: tailscale-light
+          href: https://tailscale.com/
+          description: ""
+
+- Documentation & Icons:
+    - Homepage:
+        - icon: homepage
+          href: https://gethomepage.dev/
+          description: ""
+    - Dashboard Icons:
+        - href: https://github.com/homarr-labs/dashboard-icons/
+          icon: homarr
+          description: ""
+    - Material Design Icons:
+        - href: https://pictogrammers.com/library/mdi/
+          icon: mdi-material-design-#757575
+          description: ""
+    - Simple Icons:
+        - href: https://simpleicons.org/
+          icon: mdi-image-#CCCCCC
+          description: ""
+    - Selfh.st Icons:
+        - href: https://selfh.st/icons/
+          icon: sh-selfh-st
+          description: ""
+
+- Education:
+    - Linux Training Academy:
+        - icon: linux
+          href: https://linuxtrainingacademy.com/
+          description: ""

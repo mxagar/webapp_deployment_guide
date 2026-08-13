@@ -1,0 +1,15 @@
+services:
+  filebrowser:
+    image: filebrowser/filebrowser:v2.32.0
+    container_name: filebrowser
+    ports:
+      - "8080:80"
+    volumes:
+      - /:/srv
+      - data:/data
+    environment:
+      FB_DATABASE: /data/database.db
+    restart: unless-stopped
+
+volumes:
+  data:

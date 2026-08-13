@@ -1,0 +1,4 @@
+interface:
+  display_name: "Extract Course Summary"
+  short_description: "Extract courses from a manually authenticated browser"
+  default_prompt: "Use $extract-course-summary folder <course-folder> config <config-file> to analyze a course learning page after I log in manually."

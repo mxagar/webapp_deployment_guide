@@ -1,0 +1,10 @@
+services:
+  it-tools:
+    image: 'corentinth/it-tools:latest'
+    container_name: it-tools
+    ports:
+      - '8082:80'
+    labels:
+      tsdproxy.enable: true
+      tsdproxy.ephemeral: false
+    restart: unless-stopped

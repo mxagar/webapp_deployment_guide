@@ -1,0 +1,35 @@
+---
+# For configuration options and examples, please see:
+# https://gethomepage.dev/configs/services/
+
+- Infrastructure:
+    - Portainer:
+        href: https://portainer.YOUR-TAILNET-NAME.ts.net
+        icon: portainer
+        siteMonitor: https://portainer.YOUR-TAILNET-NAME.ts.net
+        container: portainer
+        widget:
+          type: portainer
+          url: https://portainer.YOUR-TAILNET-NAME.ts.net
+          env: 3
+          key: ptr_YOUR_PORTAINER_API_KEY
+    - File Browser:
+        href: https://filebrowser.YOUR-TAILNET-NAME.ts.net
+        icon: filebrowser
+        siteMonitor: https://filebrowser.YOUR-TAILNET-NAME.ts.net
+        container: filebrowser
+    - TSDProxy:
+        href: https://tsdproxy.YOUR-TAILNET-NAME.ts.net
+        icon: tailscale-light
+        siteMonitor: https://tsdproxy.YOUR-TAILNET-NAME.ts.net
+        container: tsdproxy
+    - Open Port Finder:
+        href: https://ports.YOUR-TAILNET-NAME.ts.net
+        icon: port-note
+        siteMonitor: https://tsdproxy.YOUR-TAILNET-NAME.ts.net
+        container: ports
+    - IT-Tools:
+        href: https://it-tools.YOUR-TAILNET-NAME.ts.net
+        icon: it-tools
+        siteMonitor: https://it-tools.YOUR-TAILNET-NAME.ts.net
+        container: it-tools
