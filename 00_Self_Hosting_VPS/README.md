@@ -23,6 +23,14 @@ Table of Contents:
       - [iOS](#ios)
       - [Linux](#linux)
   - [6. Docker and Portainer Setup](#6-docker-and-portainer-setup)
+    - [Installing Docker on Ubuntu](#installing-docker-on-ubuntu)
+    - [Introduction to Portainer](#introduction-to-portainer)
+      - [Installation and Setup of Portainer](#installation-and-setup-of-portainer)
+    - [Directory Structure for Docker Applications](#directory-structure-for-docker-applications)
+    - [Docker Compose vs. Docker Run and YAML Configuration Files](#docker-compose-vs-docker-run-and-yaml-configuration-files)
+    - [Portainer Compose File](#portainer-compose-file)
+    - [Deploying Portainer and the Initial Portainer Setup](#deploying-portainer-and-the-initial-portainer-setup)
+    - [Portainer UI Walkthrough](#portainer-ui-walkthrough)
   - [7. Secure Web Service Access with TDSProxy and Tailscale](#7-secure-web-service-access-with-tdsproxy-and-tailscale)
   - [8. Building a Centralized Dashboard](#8-building-a-centralized-dashboard)
   - [9. Publishing Services on Your Own Domain](#9-publishing-services-on-your-own-domain)
@@ -390,6 +398,443 @@ sudo tailscale up
 #### Linux
 
 ## 6. Docker and Portainer Setup
+
+### Installing Docker on Ubuntu
+
+[Docker Installation Guide for Ubuntu](https://docs.docker.com/engine/install/ubuntu/)
+
+- Install Docker Engine from Docker's official Ubuntu repository.
+  - Log in to the Ubuntu host that will run Docker.
+  - Update the package index before installing or upgrading packages.
+  - Upgrade existing packages so the host starts from a current baseline.
+
+```bash
+sudo apt update
+sudo apt upgrade -y
+```
+
+- Install the prerequisite packages.
+  - `ca-certificates` lets the system validate HTTPS certificates.
+  - `curl` downloads Docker's repository signing key.
+
+```bash
+sudo apt install -y ca-certificates curl
+```
+
+- Add Docker's official GNU Privacy Guard (GPG) key.
+  - APT uses this key to verify that Docker packages came from Docker and were not tampered with.
+  - `/etc/apt/keyrings` is the standard location for third-party repository keys.
+
+```bash
+# Create the keyring directory with safe permissions.
+sudo install -m 0755 -d /etc/apt/keyrings
+
+# Download Docker's official repository signing key.
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+
+# Make the key readable so APT can verify Docker packages.
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+```
+
+- Add Docker's official APT repository.
+  - The repository tells Ubuntu where to download Docker Engine packages.
+  - The `Suites` value comes from the Ubuntu release codename.
+  - The `Architectures` value matches the CPU architecture of the current host.
+
+```bash
+sudo tee /etc/apt/sources.list.d/docker.sources <<EOF
+Types: deb
+URIs: https://download.docker.com/linux/ubuntu
+Suites: $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
+Components: stable
+Architectures: $(dpkg --print-architecture)
+Signed-By: /etc/apt/keyrings/docker.asc
+EOF
+```
+
+- Refresh APT again after adding Docker's repository.
+  - The package index now includes Docker packages from Docker's servers.
+
+```bash
+sudo apt update
+```
+
+- Install Docker Engine and the standard Docker plugins.
+  - `docker-ce` installs the Docker Engine.
+  - `docker-ce-cli` installs the Docker command-line client.
+  - `containerd.io` installs the container runtime used by Docker.
+  - `docker-buildx-plugin` adds modern build support.
+  - `docker-compose-plugin` adds Docker Compose v2 as `docker compose`.
+
+```bash
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+```
+
+- Verify that Docker installed correctly.
+  - `docker --version` confirms that the Docker client is installed.
+  - `systemctl status docker` confirms that the Docker service is running.
+  - `sudo docker ps` confirms that Docker can talk to the daemon.
+
+```bash
+docker --version
+sudo systemctl status docker
+sudo docker ps
+```
+
+- Run Docker commands without `sudo` only when you intentionally trust the user account.
+  - Docker is managed by `root` by default.
+  - Non-root users commonly see permission errors until they are added to the `docker` group.
+  - The `docker` group grants root-level privileges through Docker, so add only trusted users.
+
+```bash
+# Add the current user to the docker group.
+sudo usermod -aG docker $USER
+
+# Apply the new group membership to the current shell.
+newgrp docker
+```
+
+- Test non-root Docker access after the group change.
+  - Logging out and back in also applies the new group membership.
+  - An empty container list is fine as long as the command runs without a permission error.
+
+```bash
+docker ps
+```
+
+- Docker is ready when the version, service status, and `docker ps` checks succeed.
+  - The next step is to install management tools such as Portainer.
+  - After that, the host can start running self-hosted services in containers.
+
+### Introduction to Portainer
+
+- Portainer is a web interface for managing container environments.
+  - It helps manage Docker containers, images, volumes, networks, and related resources.
+  - It reduces the need to remember every Docker command-line option.
+  - It is especially helpful when Docker still feels abstract or intimidating.
+- Portainer makes container state easier to inspect.
+  - You can view running and stopped containers from a browser.
+  - You can check container status and resource usage at a glance.
+  - You can manage common operations without switching constantly between terminal commands.
+- Portainer simplifies application deployment.
+  - You can launch and manage applications from the web interface.
+  - You can focus more on the service you are deploying and less on the underlying Docker plumbing.
+  - It is a useful learning bridge before becoming fully comfortable with Docker CLI and Compose workflows.
+- Portainer has both free and paid editions.
+  - Portainer Community Edition (CE) is free, open source, community-supported, and aimed at home labs, hobbyists, and individual learning.
+  - [Portainer CE Installation Guide](https://docs.portainer.io/start/install-ce)
+  - [Portainer CE Installation on Docker for Linux](https://docs.portainer.io/start/install-ce/server/docker/linux)
+  - [Portainer CE Initial Setup](https://docs.portainer.io/start/install-ce/server/docker/windows)
+  - Portainer Business Edition (BE) is the commercial edition for organizations and requires a license key.
+
+#### Installation and Setup of Portainer
+
+Sources:
+
+- [Portainer CE Installation Guide](https://docs.portainer.io/start/install-ce)
+- [Portainer CE Installation on Docker for Linux](https://docs.portainer.io/start/install-ce/server/docker/linux)
+- [Portainer CE Initial Setup](https://docs.portainer.io/start/install-ce/server/docker/windows)
+
+- Install Portainer Community Edition (CE) as the management UI for the local Docker host.
+  - Portainer CE is the free, open-source edition intended for home labs and individual learning.
+  - The Portainer Server container manages Docker through the host's Docker socket.
+  - The `portainer_data` volume stores Portainer's database, settings, users, and environment metadata.
+  - Portainer's web interface is exposed over HTTPS on port `9443`.
+- Create Portainer's persistent data volume.
+
+```bash
+# Store Portainer's configuration and internal database outside the container.
+docker volume create portainer_data
+```
+
+- Start Portainer CE with `docker run`.
+  - This is the direct command from the Portainer CE Docker/Linux install flow.
+  - `--restart=always` starts Portainer again after Docker or the server restarts.
+  - `/var/run/docker.sock` lets Portainer manage the local Docker Engine.
+
+```bash
+docker run -d \
+  --name portainer \
+  --restart=always \
+  -p 8000:8000 \
+  -p 9443:9443 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v portainer_data:/data \
+  portainer/portainer-ce:lts
+```
+
+- Or run Portainer from the `/opt/docker/portainer` application folder.
+  - This matches the directory pattern used for self-hosted Docker applications.
+  - The Compose file keeps the Portainer deployment easy to inspect, update, and redeploy.
+
+```bash
+cd /opt/docker/portainer
+nano compose.yaml
+```
+
+```yaml
+services:
+  portainer:
+    image: portainer/portainer-ce:lts
+    container_name: portainer
+    restart: always
+    ports:
+      - "8000:8000"
+      - "9443:9443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+
+volumes:
+  portainer_data:
+    name: portainer_data
+```
+
+```bash
+# Start Portainer from the Compose file.
+docker compose up -d
+```
+
+- Open Portainer in a browser.
+  - Use the server's IP address or Tailscale IP address.
+  - The browser may warn about the default self-signed certificate.
+
+```text
+https://<server-ip-or-tailscale-ip>:9443
+```
+
+- Complete the initial setup.
+  - Create the first administrator user.
+  - The default username is commonly `admin`, but it can be changed during setup.
+  - Use a strong password; current Portainer setup requires a sufficiently long administrator password.
+  - After the administrator user is created, Portainer launches its environment setup flow.
+- Connect Portainer to the local Docker environment.
+  - Choose the local Docker environment when prompted.
+  - The local environment is available because the container has `/var/run/docker.sock` mounted.
+  - Click `Get Started` after the local environment is detected.
+  - The dashboard should then show the local Docker host, containers, images, volumes, and networks.
+- Keep the exposed ports clear in your firewall model.
+  - Port `9443` is the main HTTPS web interface.
+  - Port `8000` is used by Portainer for edge agent tunneling; keep it only if you need that feature.
+  - When accessing Portainer only through Tailscale, avoid exposing `9443` publicly on the internet.
+
+
+### Directory Structure for Docker Applications
+
+- Use a consistent parent directory for Docker application files.
+  - `/opt/docker` keeps self-hosted app configuration separate from user home directories and operating system files.
+  - `/opt` is commonly used for optional software and add-on packages.
+  - A predictable path makes upgrades, backups, and troubleshooting easier.
+- Give each Docker application its own subdirectory.
+  - Portainer configuration can live in `/opt/docker/portainer`.
+  - A dashboard application such as Homepage can live in `/opt/docker/homepage`.
+  - Future services should follow the same `/opt/docker/<app-name>` pattern.
+- Store each application's Compose file in its own directory.
+  - Use `compose.yaml` for new Docker Compose projects.
+  - Docker Compose uses the directory name as the default project name.
+  - Keeping one Compose project per folder makes container names, volumes, logs, and updates easier to reason about.
+- Create the parent directory and the first application directory.
+
+```bash
+# Create the shared parent folder for Docker app projects.
+sudo mkdir -p /opt/docker
+
+# Create a dedicated folder for Portainer's Compose file and related configuration.
+sudo mkdir -p /opt/docker/portainer
+```
+
+- Let your regular admin user edit the application folders when appropriate.
+  - Root-owned folders are fine, but they force you to use `sudo` for every file edit.
+  - If this is your personal server, giving your admin user ownership of `/opt/docker` makes Compose files easier to maintain.
+  - Replace `$USER` only when you want another account to own the files.
+
+```bash
+# Give the current user ownership of the Docker application directory tree.
+sudo chown -R "$USER:$USER" /opt/docker
+```
+
+- Keep persistent application data intentional.
+  - Some apps use Docker named volumes.
+  - Some apps bind-mount folders under `/opt/docker/<app-name>`.
+  - Choose one pattern per app and document it in that app's `compose.yaml`.
+- Keep application source code separate from deployed runtime configuration.
+  - `/opt/git` is a reasonable parent directory for cloned application repositories.
+  - `/opt/docker` is a reasonable parent directory for deployed Compose projects and runtime configuration.
+  - This split keeps source checkout history separate from server-specific files such as `.env`, bind-mounted data, backups, and generated state.
+- Avoid symlinking Compose files from `/opt/docker` into `/opt/git` as the default pattern.
+  - Docker Compose resolves relative paths from the project directory, normally the directory of the first Compose file.
+  - A symlinked Compose file can make `build: .`, `env_file: .env`, and bind mounts behave differently than expected.
+  - Symlinks also make it less obvious which files are server-specific and which files belong to the source repository.
+- Prefer one of these deployment patterns:
+  - Run Compose directly from the application repository when the repo is the deployment unit.
+  - Put deployment-only Compose files in `/opt/docker/<app-name>` and point `build:` or image tags at the app source or registry.
+  - Build images in CI/CD or manually from `/opt/git/<app-name>`, then deploy immutable image tags from `/opt/docker/<app-name>/compose.yaml`.
+- Example source-and-deploy layout:
+
+```text
+/opt/
+  git/
+    my-app/
+      Dockerfile
+      src/
+      compose.yaml
+  docker/
+    my-app/
+      compose.yaml
+      .env
+      data/
+```
+
+- Example Compose file in `/opt/docker/my-app/compose.yaml` using source from `/opt/git/my-app`.
+
+```yaml
+services:
+  my-app:
+    build:
+      context: /opt/git/my-app
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+```
+
+- Pull source updates separately from deployment updates.
+
+```bash
+# Update application source.
+cd /opt/git/my-app
+git pull
+
+# Rebuild and redeploy from the deployment folder.
+cd /opt/docker/my-app
+docker compose up -d --build
+```
+
+### Docker Compose vs. Docker Run and YAML Configuration Files
+
+- Docker containers can be started with either `docker run` or Docker Compose.
+  - `docker run` is fine for quick one-off containers with little configuration.
+  - Docker Compose is better for repeatable applications with ports, volumes, environment variables, restart policies, and multiple services.
+  - Both approaches can start containers, but Compose makes the configuration easier to read, review, and reuse.
+- `docker run` becomes hard to maintain as options grow.
+  - A real service often needs port mappings, persistent storage, environment variables, container names, and restart behavior.
+  - Multi-container apps may also need networks and startup relationships between services.
+  - Re-typing or copying long `docker run` commands makes mistakes more likely.
+
+```bash
+docker run -d \
+  --name example-web \
+  --restart=always \
+  -p 8080:80 \
+  -v example_data:/usr/share/nginx/html \
+  nginx:latest
+```
+
+- Docker Compose stores container configuration in a YAML file.
+  - YAML means YAML Ain't Markup Language.
+  - A Compose file can define images, ports, volumes, environment variables, restart policies, networks, and service relationships.
+  - The same file can be kept with the deployment folder so the application can be recreated consistently.
+- Use `compose.yaml` for new Docker Compose projects.
+  - Docker currently prefers `compose.yaml`.
+  - Older examples may use `docker-compose.yml` or `docker-compose.yaml`.
+  - The concepts are the same, but this guide uses `compose.yaml` for consistency.
+
+```yaml
+services:
+  web:
+    image: nginx:latest
+    container_name: example-web
+    restart: always
+    ports:
+      - "8080:80"
+    volumes:
+      - example_data:/usr/share/nginx/html
+
+volumes:
+  example_data:
+```
+
+- Start the Compose application from the folder that contains `compose.yaml`.
+  - `docker compose up -d` creates or updates the services in detached mode.
+  - Compose recreates containers when the configuration or image changes while preserving mounted volumes.
+  - Use `docker compose restart` only when you want to restart existing containers without applying Compose file changes.
+
+```bash
+docker compose up -d
+```
+
+- Use Compose as the default for self-hosted applications.
+  - It documents the deployment in a file instead of hiding it in shell history.
+  - It handles multi-service apps more cleanly than separate `docker run` commands.
+  - It fits the `/opt/docker/<app-name>/compose.yaml` directory pattern used in this guide.
+
+### Portainer Compose File
+
+- Create Portainer's Compose file in the Portainer application directory.
+  - The deployment folder should be `/opt/docker/portainer`.
+  - The Compose file should be named `compose.yaml`.
+  - YAML uses indentation to define structure, so spacing must be exact.
+  - Copy and paste Compose examples when possible instead of retyping them from memory.
+
+```bash
+cd /opt/docker/portainer
+vim compose.yaml
+```
+
+- The Portainer Compose file defines one service and one persistent volume.
+  - `services` lists the containers Docker Compose should run.
+  - `portainer` is the service name for the Portainer container.
+  - `image: portainer/portainer-ce:lts` uses Portainer Community Edition (CE) with the Long Term Support (LTS) tag.
+  - `container_name: portainer` gives the container a predictable Docker name.
+  - `restart: always` restarts Portainer automatically after Docker or host restarts.
+- Portainer needs two important volume mounts.
+  - `/var/run/docker.sock:/var/run/docker.sock` gives Portainer access to the local Docker daemon.
+  - This Docker socket mount is powerful because it lets Portainer manage containers, images, volumes, and networks on the host.
+  - `portainer_data:/data` stores Portainer users, settings, and database state outside the container.
+  - The top-level `volumes` block makes the named volume explicit and stable.
+- Portainer exposes its web interface over HTTPS.
+  - `9443:9443` publishes the Portainer web interface.
+  - `8000:8000` is for Portainer Edge Agent tunneling and can be removed if you do not use Edge Agents.
+  - Prefer accessing Portainer over Tailscale instead of exposing `9443` publicly.
+- The local course copy of the Portainer Compose file is here:
+
+[compose.yaml](./lab/self-hosted-course/docker-stacks/portainer/compose.yaml)
+
+- The file contains:
+
+```yaml
+services:
+  portainer:
+    container_name: portainer
+    image: portainer/portainer-ce:lts
+    restart: always
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    ports:
+      - "9443:9443"
+      - "8000:8000" # Remove if you do not intend to use Edge Agents.
+
+volumes:
+  portainer_data:
+    name: portainer_data
+
+networks:
+  default:
+    name: portainer_network
+```
+
+- Start Portainer from `/opt/docker/portainer`.
+  - `docker compose up -d` creates the volume, network, and Portainer container.
+  - After startup, open `https://<server-ip-or-tailscale-ip>:9443`.
+
+```bash
+docker compose up -d
+```
+
+### Deploying Portainer and the Initial Portainer Setup
+
+### Portainer UI Walkthrough
 
 ## 7. Secure Web Service Access with TDSProxy and Tailscale
 
