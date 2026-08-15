@@ -209,3 +209,4 @@ __marimo__/
 # Added
 .claude/skills
 .agents/skills
+.vscode
