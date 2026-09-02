@@ -210,3 +210,4 @@ __marimo__/
 .claude/skills
 .agents/skills
 .vscode
+.DS_Store
