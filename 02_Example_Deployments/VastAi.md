@@ -29,7 +29,7 @@ Table of Contents:
   - [5. The `vastai` CLI](#5-the-vastai-cli)
   - [6. Example: Serving an LLM with the vLLM API](#6-example-serving-an-llm-with-the-vllm-api)
     - [Deploying a single-GPU model](#deploying-a-single-gpu-model)
-    - [Deploying a large, quantized model across multiple GPUs](#deploying-a-large-quantized-model-across-multiple-gpus)
+    - [Selecting a Quantization Method](#selecting-a-quantization-method)
   - [7. Example: Deploying DeepSeek R1 with Ollama and Open WebUI](#7-example-deploying-deepseek-r1-with-ollama-and-open-webui)
   - [8. Vast.ai Serverless](#8-vastai-serverless)
   - [9. Example: Deploying Qwen3.8-27B on Vast.ai Serverless](#9-example-deploying-qwen38-27b-on-vastai-serverless)
@@ -221,7 +221,19 @@ ssh -i ~/.ssh/id_vastai_ed25519 -p "$VASTAI_PORT" root@"$VASTAI_HOST" "<command>
 
 ### Calling an Instance from Python with the OpenAI SDK
 
-- The console-launched vLLM template proxies its API through the instance portal over HTTPS with the same self-signed certificate discussed above, and authenticates requests with an auto-generated `OPEN_BUTTON_TOKEN` — so that token has to be read once before it can be used in a script.
+**Do you need a token at all?** It depends entirely on what sits in front of the model server, not on vLLM or Ollama themselves — neither enforces authentication on its own:
+
+| Deployment | Auth required? | What to send |
+|---|---|---|
+| Console template, called through the instance portal (this subsection; also Section 7's Open WebUI login) | Yes | `OPEN_BUTTON_TOKEN`, or a fixed `WEB_PASSWORD` you set yourself, as the bearer token / `api_key` |
+| CLI-raw Docker instance with the port mapped straight through ([Section 6](#6-example-serving-an-llm-with-the-vllm-api)) | No, by default | Any placeholder string — vLLM has no built-in auth unless *you* add one |
+| Vast.ai Serverless ([Section 9](#9-example-deploying-qwen38-27b-on-vastai-serverless)) | Yes, always | Your Vast.ai **account** API key, not a per-instance token |
+
+- The console template puts a Caddy reverse proxy (the "instance portal") in front of the model server, and that proxy is what checks the token — vLLM itself is unaware of it.
+- Section 6's CLI example maps the container's port directly with no proxy in between, so nothing checks credentials at all: anyone with the IP:port can call it. If you expose an instance like that publicly, add your own auth by passing `--api-key <SOME_SECRET>` inside `--args`/`VLLM_ARGS`, then send that same value back as `api_key` from the client.
+- Serverless is different again: an endpoint has no fixed IP of its own to put a proxy in front of, so authentication is against your Vast.ai account API key instead of anything the model server issues (see [Section 9](#9-example-deploying-qwen38-27b-on-vastai-serverless)).
+
+The console-launched vLLM template proxies its API through the instance portal over HTTPS with the same self-signed certificate discussed above, and authenticates requests with an auto-generated `OPEN_BUTTON_TOKEN` — so that token has to be read once before it can be used in a script.
 - Retrieve it over SSH (or a Jupyter terminal), since it is exported as an environment variable on the instance and cannot be read any other way:
 
 ```bash
@@ -294,6 +306,8 @@ vastai create instance <OFFER_ID> \
   --args --model stabilityai/stablelm-2-zephyr-1_6b
 ```
 
+- Everything after `--args` is passed straight through to vLLM's own `vllm serve` entrypoint inside the container, not interpreted by `vastai` itself. `--model` is **vLLM's** flag, and its value is a Hugging Face Hub repo slug (`org/repo`, exactly as it appears in the model's URL on huggingface.co) — vLLM downloads that repo's weights on first start. See [Selecting a Quantization Method](#selecting-a-quantization-method) below for the other common `vllm serve` flags.
+
 ## 6. Example: Serving an LLM with the vLLM API
 
 - [vLLM](https://github.com/vllm-project/vllm) is the most widely used open-source LLM-serving engine.
@@ -337,10 +351,23 @@ response = client.chat.completions.create(
 print(response.choices[0].message.content)
 ```
 
-### Deploying a large, quantized model across multiple GPUs
+### Selecting a Quantization Method
 
-- Quantization shrinks a model's memory footprint (usually with a small, often unnoticeable, quality tradeoff), which lets larger models fit on cheaper or fewer GPUs.
-- Serving a 70B-parameter Llama 3 model in AWQ quantization across four RTX 4090s:
+- Quantization shrinks a model's memory footprint (usually with a small, often unnoticeable, quality tradeoff), which lets larger models fit on cheaper or fewer GPUs. It is controlled by vLLM's own `--quantization` flag, passed the same way as `--model` — after `--args` in `vastai create instance`.
+- Two different things can determine which value to use, and they are not interchangeable:
+  - **Pre-quantized checkpoint**: someone already quantized the weights and uploaded them to Hugging Face as their own repo. `--model` points at *that* repo, and `--quantization` must match the format it was quantized with.
+  - **On-the-fly quantization**: `--model` points at the normal, full-precision repo, and vLLM quantizes the weights itself while loading them onto the GPU. Only a few methods support this (notably `bitsandbytes`; `fp8` can also be applied dynamically on Ada/Hopper-class GPUs).
+- Common `--quantization` values and how their checkpoints are typically found on Hugging Face:
+
+| Value | Checkpoint type | Typical HF naming | GPU generations |
+|---|---|---|---|
+| `awq` | Pre-quantized | `...-AWQ` suffix (e.g. `casperhansen/llama-3-70b-instruct-awq`) | Turing and newer |
+| `gptq` | Pre-quantized | `...-GPTQ` suffix, or published by GPTQModel/AutoGPTQ | Volta and newer |
+| `gguf` | Pre-quantized | `...-GGUF` suffix, individual `.gguf` files per bit-width | Broad (also CPU) |
+| `fp8` | Either (dynamic, or a pre-quantized `...-FP8` repo) | `...-FP8` suffix when pre-quantized | Ada, Hopper and newer |
+| `bitsandbytes` | On-the-fly, from the unquantized repo | No special naming — use the original repo | Volta and newer |
+
+- Serving a 70B-parameter Llama 3 model in AWQ (pre-quantized) across four RTX 4090s:
 
 ```bash
 vastai search offers 'compute_cap >= 800 gpu_ram >= 24 num_gpus = 4 static_ip = true direct_port_count >= 1 cuda_vers >= 12.4 rentable = true'
@@ -353,7 +380,17 @@ vastai create instance <OFFER_ID> \
 ```
 
   - `--tensor-parallel-size 4` splits the model's layers across the four requested GPUs.
-  - `--quantization awq` tells vLLM to load the pre-quantized AWQ weights instead of full precision.
+  - `--quantization awq` tells vLLM to load the pre-quantized AWQ weights instead of full precision. `--model` points at the AWQ repo itself, not the original full-precision one.
+- Applying on-the-fly `bitsandbytes` quantization to the original, unquantized repo instead — useful when no pre-quantized version exists for the model you want:
+
+```bash
+vastai create instance <OFFER_ID> \
+  --image vllm/vllm-openai:latest \
+  --env '-p 8000:8000' \
+  --disk 40 \
+  --args --model meta-llama/Llama-3.1-8B-Instruct --quantization bitsandbytes
+```
+
 - Combining Vast.ai's marketplace pricing with quantization is what makes serving 70B-class models practical on consumer GPUs instead of requiring data-center cards.
 
 ## 7. Example: Deploying DeepSeek R1 with Ollama and Open WebUI
@@ -449,6 +486,33 @@ vastai create workergroup \
 
 ### Query the endpoint
 
+Two ways to call the endpoint; both authenticate with the same credential, your **Vast.ai account API key** (not a per-instance token like `OPEN_BUTTON_TOKEN`), since a Serverless endpoint has no fixed IP of its own to attach an instance-level proxy to.
+
+**Option A — the `openai` Python SDK, via Vast.ai's OpenAI-compatible proxy.** Vast.ai runs a translation proxy at `openai.vast.ai` that accepts standard OpenAI-shaped requests and routes them to your endpoint, so existing OpenAI-SDK code needs only a `base_url`/`api_key` change:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    api_key="<YOUR_VAST_API_KEY>",  # from https://cloud.vast.ai/account/
+    base_url="https://openai.vast.ai/qwen3.8-27b",  # https://openai.vast.ai/<ENDPOINT_NAME>
+)
+
+response = client.chat.completions.create(
+    model="",  # ignored by the proxy -- the endpoint's MODEL_NAME decides what actually serves the request
+    messages=[{"role": "user", "content": "Summarize what makes Qwen3.8-27B suitable for agentic tasks."}],
+    max_tokens=300,
+)
+
+print(response.choices[0].message.content)
+```
+
+- Only `/v1/chat/completions` and `/v1/completions` are proxied (streaming works on both); embeddings, vision/audio input, image generation, and parallel tool calls are **not** supported through this proxy.
+- The `model` field is accepted but ignored — pass anything, or leave it empty — since the model actually served is fixed by the workergroup's `MODEL_NAME`.
+- This is the simplest option whenever the app only needs plain chat/completions and already speaks the OpenAI SDK.
+
+**Option B — the native `vastai` Serverless SDK.** Lower-level, and needed for anything the proxy does not cover (custom routes, explicit cost/token accounting per request, non-chat workloads):
+
 ```python
 import asyncio
 from vastai import Serverless
@@ -467,8 +531,9 @@ async def main():
 asyncio.run(main())
 ```
 
-- The Serverless SDK handles worker selection, request routing, and authentication automatically; the client never needs to track individual worker IP addresses the way an on-demand deployment does (compare [Section 6](#6-example-serving-an-llm-with-the-vllm-api)).
-- Both `/v1/completions` and `/v1/chat/completions` are exposed, matching the OpenAI API shape, so existing OpenAI-SDK client code needs only a base URL / routing change to target the Serverless endpoint instead of a fixed instance.
+- `cost` tells the autoscaler how many tokens/units this request is expected to consume (`max_tokens` is a reasonable value for a chat request); it feeds the load calculations behind the [scaling parameters](#8-vastai-serverless) above, it is not a spending cap.
+- The SDK handles worker selection and request routing itself; the client never needs to track individual worker IP addresses the way an on-demand deployment does (compare [Section 6](#6-example-serving-an-llm-with-the-vllm-api)).
+- Unless you specifically need what Option B exposes, prefer Option A — it is less code and drops in wherever an OpenAI client already exists.
 
 ## 10. Managing Costs and Cleanup
 
