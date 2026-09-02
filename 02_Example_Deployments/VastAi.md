@@ -20,6 +20,12 @@ Table of Contents:
   - [2. Account Setup and Billing](#2-account-setup-and-billing)
   - [3. Core Concepts: Templates, Instances, and Offers](#3-core-concepts-templates-instances-and-offers)
   - [4. Quickstart: Renting an On-Demand GPU Instance](#4-quickstart-renting-an-on-demand-gpu-instance)
+    - [Trusting the Vast.ai Certificate (Jupyter / Instance Portal HTTPS)](#trusting-the-vastai-certificate-jupyter--instance-portal-https)
+    - [Managing SSH Keys](#managing-ssh-keys)
+      - [Connecting from a Non-Interactive Client (e.g., a Railway-Hosted App)](#connecting-from-a-non-interactive-client-eg-a-railway-hosted-app)
+    - [Launching an LLM: Ollama vs. vLLM](#launching-an-llm-ollama-vs-vllm)
+      - [Which one should you pick?](#which-one-should-you-pick)
+    - [Calling an Instance from Python with the OpenAI SDK](#calling-an-instance-from-python-with-the-openai-sdk)
   - [5. The `vastai` CLI](#5-the-vastai-cli)
   - [6. Example: Serving an LLM with the vLLM API](#6-example-serving-an-llm-with-the-vllm-api)
     - [Deploying a single-GPU model](#deploying-a-single-gpu-model)
@@ -53,6 +59,7 @@ Table of Contents:
 - Create an account from the main search interface's login modal, verify the account through the confirmation email, then open the **Billing** section.
 - Add funds with a credit card, Coinbase, or Crypto.com.
 - Enable **automatic top-up** so that instances are not interrupted when the account balance runs low.
+  - First, we need to add payment method (e.g., credit card), then add credit for the first time, and finally enable auto top-up.
 - Storage is billed independently of compute:
   - Disk space attached to an instance accrues cost continuously, whether the instance is running or stopped.
   - Only a fully **destroyed** instance stops all charges (see [Section 10](#10-managing-costs-and-cleanup)).
@@ -77,15 +84,40 @@ Table of Contents:
 
 ## 4. Quickstart: Renting an On-Demand GPU Instance
 
-1. Open the Vast.ai console and pick a **template** relevant to the workload (for example ComfyUI for image generation, or PyTorch for general development).
+There is a CLI which can be installed as follows:
+
+```bash
+# System installation
+curl -fsSL https://vast.ai/install.sh | bash
+
+# Python installation
+pip install --upgrade vastai
+
+# Set your API key (from the dashboard) for CLI authentication
+# https://cloud.vast.ai: Keys > API Keys > Create New Key
+vastai set api-key <YOUR_API_KEY>
+```
+
+To create an instance:
+
+1. Open the Vast.ai console [https://cloud.vast.ai](https://cloud.vast.ai) and pick a **template** relevant to the workload (for example ComfyUI for image generation, or PyTorch for general development, or vLLM for serving LLMs).
 2. Size the **disk**: hover over the price button to see storage cost per GB, GPU cost per hour, and the combined total before renting.
 3. Filter and pick an **offer** (a specific GPU machine) that matches the template's requirements, then click **Rent**.
+   - The first time you open Jupyter or the instance portal, the browser may prompt to trust or download a certificate -- see [Trusting the Vast.ai Certificate](#trusting-the-vastai-certificate-jupyter--instance-portal-https) below for what it is and whether you need to install it.
 4. Watch the instance load on the **Instances** page:
    - IP address and port mappings are available from the instance's detail button.
    - The **Open** button launches the instance portal, showing every running service (for example Jupyter, a terminal, the app UI) and their logs.
+   - In the instance web UI we can see other additional options:
+     - Instance ID
+     - IP and Port information
+     - Hardware specs
+     - Run stats
+     - We can add SSH keys manually here, if not added globally in the account settings.
+     - Launch Jupyter with its icon
+     - etc.
 5. Connect to the instance through whichever service the template exposes:
    - Jupyter gives notebooks, a terminal, and a file browser (drag-and-drop upload).
-   - SSH access and key management (add/remove keys) are available per instance.
+   - SSH access and key management (add/remove keys) are available per instance — see [Managing SSH Keys](#managing-ssh-keys) below.
 6. Other per-instance actions available from the console:
    - Tag the instance for organization.
    - Recreate the instance to change its template without re-selecting an offer.
@@ -93,12 +125,152 @@ Table of Contents:
    - Reboot, stop, or destroy the instance.
 7. Check the **Billing** page at any time to see the running cost per hour and per day for each instance.
 
+![Vast.ai Instances](./assets/vastai_instances.png)
+
+![Vast.ai Open Instance](./assets/vastai_open_instance.png)
+
+### Trusting the Vast.ai Certificate (Jupyter / Instance Portal HTTPS)
+
+- Jupyter and the instance portal are served over HTTPS by a Caddy proxy running on the instance, using a **self-signed** certificate generated at boot — not one issued by a public certificate authority. That mismatch is exactly what triggers the browser's security warning the first time you open either service.
+- Two ways to deal with it:
+  - **Per-visit workaround**: click through the browser's warning (Chrome/Edge: "Advanced" -> "Proceed"). Fine for occasional, personal access.
+  - **Permanent fix**: install Vast.ai's own root certificate once, so every instance you ever rent is trusted automatically:
+    - Download it directly from `https://console.vast.ai/static/jvastai_root.cer`.
+    - **Windows**: double-click the file -> *Install Certificate* -> *Local Machine* -> *Place all certificates in the following store* -> *Trusted Root Certification Authorities* -> finish, then reboot.
+    - **macOS**: double-click the file to add it to Keychain Access, open the new entry, expand **Trust**, and set "When using this certificate" to **Always Trust**. Takes effect immediately, no reboot.
+    - **Chrome (Windows/Linux)**: Settings -> Privacy and security -> Security -> *Manage certificates* -> **Authorities** tab -> Import -> select `jvastai_root.cer` -> place it in *Trusted Root Certification Authorities*.
+- This certificate only covers the HTTPS front-end Vast.ai puts in front of Jupyter/the instance portal. It has nothing to do with SSH, and nothing to do with a plain HTTP API port an image binds directly (for example a vLLM server started without `ENABLE_HTTPS`, as in [Section 6](#6-example-serving-an-llm-with-the-vllm-api)).
+- For scripts and CLI tools hitting an HTTPS instance-portal endpoint without installing the certificate, skip verification instead: `curl -k ...`, or `verify=False` in Python (shown in [Calling an Instance from Python](#calling-an-instance-from-python-with-the-openai-sdk) below).
+
+### Managing SSH Keys
+
+- SSH access is authenticated with a public/private **keypair**, not a password. The key is not tied to any particular "machine" — it is tied to whichever private key file the SSH client happens to load when it connects, wherever that client runs.
+
+1. Generate a keypair (any computer works — it does not have to be the box that will later connect):
+
+```bash
+ssh-keygen -t ed25519 -C "mxagar@gmail.com" -f ~/.ssh/id_vastai_ed25519
+```
+
+2. Register the **public** half (`id_vastai_ed25519.pub`) with Vast.ai:
+   - Account-wide, at [cloud.vast.ai/manage-keys](https://cloud.vast.ai/manage-keys/) — this only applies to instances created *after* the key is added; existing instances keep whatever key they were launched with.
+   - Or per existing instance, via the CLI:
+
+```bash
+vastai attach ssh <INSTANCE_ID> ~/.ssh/id_vastai_ed25519.pub
+```
+
+3. Connect with the matching **private** key. Clicking the instance's connect button in the console shows two ready-made connection strings, reaching the same instance through different network paths — add `-i ~/.ssh/id_vastai_ed25519` to either to use this key instead of the default:
+
+```bash
+# Direct SSH Connect: straight to the host machine's own public IP,
+# only offered when that host has an open, forwardable port. Faster,
+# no intermediary -- preferred whenever it is available.
+ssh -i ~/.ssh/id_vastai_ed25519 -p <PORT> root@<IP> -L 8080:localhost:8080
+
+# Proxy SSH Connect: relayed through one of Vast.ai's own SSH proxy
+# servers (ssh4.vast.ai or similar). Works for every instance, including hosts
+# behind NAT/CGNAT that can't be reached directly, at the cost of some
+# extra latency and slower file transfers (scp/rsync).
+ssh -i ~/.ssh/id_vastai_ed25519 -p <PORT> root@<IP/DNS> -L 8080:localhost:8080
+```
+
+  - If only the Proxy string is shown (Direct greyed out), that particular host machine cannot accept inbound connections directly, so Proxy is the only option.
+  - Both accept the same flags, e.g. the `-L 8080:localhost:8080` local port-forward above makes a service listening on port 8080 on the instance (Jupyter, a web UI, ...) reachable at `localhost:8080` on your own machine.
+- VM-type instances (as opposed to container/Docker instances) cannot have their key swapped live — recreate the VM to apply a new key.
+
+#### Connecting from a Non-Interactive Client (e.g., a Railway-Hosted App)
+
+- The keypair does not need to be generated "on" the machine that will use it. Generate it anywhere, register the **public** half with Vast.ai exactly as above, and only the **private** half needs to end up wherever the SSH client actually runs — e.g., inside a Railway service's container at runtime.
+
+1. Generate the keypair locally (once) and register the public key with Vast.ai as above.
+2. Store the **private** key's contents as a Railway variable (Project -> Service -> Variables), for example `VASTAI_SSH_PRIVATE_KEY`. Store the full PEM text itself, not a file path — a Railway container does not share your local filesystem.
+3. On boot, write the variable to a file inside the container and lock down its permissions before use, since SSH refuses group- or world-readable private keys:
+
+```bash
+mkdir -p ~/.ssh
+printf '%s\n' "$VASTAI_SSH_PRIVATE_KEY" > ~/.ssh/id_vastai_ed25519
+chmod 600 ~/.ssh/id_vastai_ed25519
+ssh -i ~/.ssh/id_vastai_ed25519 -p "$VASTAI_PORT" root@"$VASTAI_HOST" "<command>"
+```
+
+- If the Railway app only needs to call the model's HTTP API (chat completions, embeddings, etc.) rather than run shell commands on the instance, skip SSH entirely: point the OpenAI SDK or `requests` at the instance's public IP and mapped port, or at a Serverless endpoint ([Section 9](#9-example-deploying-qwen38-27b-on-vastai-serverless)). No keypair is involved for pure API calls — SSH keys only matter for actual shell or file access to the instance.
+
+### Launching an LLM: Ollama vs. vLLM
+
+- Both Ollama and vLLM ship as ready-made templates in the console, so either can be launched with the same Quickstart flow above, entirely without the CLI.
+- **Ollama** (template: "Ollama" or "Ollama + Open WebUI"):
+  1. Pick the template and size the disk for the models you plan to pull (each model downloads on demand once the instance is running, not at rent time).
+  2. Rent an offer with enough VRAM for the models you intend to run.
+  3. Open the instance portal and launch Open WebUI (or connect over SSH and use the `ollama` CLI directly).
+  4. Pull a model by tag, either from Open WebUI's model manager or a terminal, for example `ollama pull llama3.1:8b`.
+  5. Chat immediately through Open WebUI, or call Ollama's own OpenAI-compatible API.
+  - Full walkthrough: [Section 7](#7-example-deploying-deepseek-r1-with-ollama-and-open-webui).
+- **vLLM** (template: "vLLM"):
+  1. Find the recommended vLLM template in the gallery and click its pencil icon to edit it *before* renting.
+  2. Set `VLLM_MODEL` to the Hugging Face repo you want served (default `deepseek-ai/DeepSeek-R1-Distill-Llama-8B`), and optionally `VLLM_ARGS` for extra vLLM flags (quantization, `--tensor-parallel-size`, etc.).
+  3. Save the edited template — it appears under "My Templates" — then rent an offer with enough VRAM for that model.
+  4. The API listens on port 8000. Once the model finishes downloading, call it with the OpenAI SDK or `curl`, authenticating with the instance's `OPEN_BUTTON_TOKEN` as a bearer token (see [Calling an Instance from Python](#calling-an-instance-from-python-with-the-openai-sdk) below for how to retrieve it).
+  - Full walkthrough (CLI-driven, same underlying image): [Section 6](#6-example-serving-an-llm-with-the-vllm-api).
+
+#### Which one should you pick?
+
+- **Ollama** for quick experimentation, a ready-made chat UI, and light/personal usage: it manages model downloads and quantization with almost no configuration.
+- **vLLM** for serving an application or multiple concurrent users: its PagedAttention-based batching clearly outperforms Ollama under concurrent load (published benchmarks show roughly 6x higher aggregate throughput at 50 concurrent requests), and its OpenAI-compatible API is the same shape most production client code already expects.
+- A common progression is to prototype with Ollama, then switch to vLLM once concurrency, throughput, or production metrics matter — the migration is usually just pointing the same OpenAI-SDK client at a different base URL and model name.
+
+### Calling an Instance from Python with the OpenAI SDK
+
+- The console-launched vLLM template proxies its API through the instance portal over HTTPS with the same self-signed certificate discussed above, and authenticates requests with an auto-generated `OPEN_BUTTON_TOKEN` — so that token has to be read once before it can be used in a script.
+- Retrieve it over SSH (or a Jupyter terminal), since it is exported as an environment variable on the instance and cannot be read any other way:
+
+```bash
+ssh -i ~/.ssh/id_vastai_ed25519 -p <PORT> root@<INSTANCE_IP> 'echo $OPEN_BUTTON_TOKEN'
+```
+
+  - Alternatively, set a fixed `WEB_PASSWORD` environment variable on the template before renting, and use that known value as the bearer token instead of reading the auto-generated one.
+- Minimal script, pointing the official `openai` Python package at the instance instead of OpenAI's own servers:
+
+```python
+import httpx
+from openai import OpenAI
+
+INSTANCE_IP = "123.45.67.89"
+PORT = 8000
+TOKEN = "your-open-button-token-or-web-password"
+
+client = OpenAI(
+    base_url=f"https://{INSTANCE_IP}:{PORT}/v1",
+    api_key=TOKEN,
+    # the instance portal uses a self-signed certificate (see above);
+    # either install jvastai_root.cer locally, or skip verification like this:
+    http_client=httpx.Client(verify=False),
+)
+
+response = client.chat.completions.create(
+    model="deepseek-ai/DeepSeek-R1-Distill-Llama-8B",  # must match VLLM_MODEL on the instance
+    messages=[{"role": "user", "content": "Hello from a Vast.ai instance!"}],
+)
+
+print(response.choices[0].message.content)
+```
+
+- `model` must match the `VLLM_MODEL` value the template was launched with exactly.
+- If the instance instead exposes vLLM directly on a plain HTTP port with no auth (as in the CLI-driven [Section 6](#6-example-serving-an-llm-with-the-vllm-api) example, launched without `ENABLE_HTTPS`), drop `https://` for `http://`, drop the custom `http_client`, and `api_key` can be any placeholder string.
+
 ## 5. The `vastai` CLI
 
 - Most non-trivial workflows (searching offers programmatically, creating instances with custom Docker images and launch arguments, managing serverless endpoints) go through the `vastai` command-line tool rather than the web console.
 
 ```bash
-pip install vastai
+# System installation
+curl -fsSL https://vast.ai/install.sh | bash
+
+# Python installation
+pip install --upgrade vastai
+
+# Set your API key (from the dashboard) for CLI authentication
+# https://cloud.vast.ai: Keys > API Keys > Create New Key
 vastai set api-key <YOUR_API_KEY>
 ```
 
@@ -197,7 +369,7 @@ vastai create instance <OFFER_ID> \
 7. Open the instance portal: it lists Open WebUI's port and the API's port, along with Jupyter and SSH.
 8. Launch Open WebUI and create the local admin account (name, email, password) on first load.
 9. Download the model inside the UI:
-   - Go to **Admin Panel → Settings → Models**.
+   - Go to **Admin Panel -> Settings -> Models**.
    - Add a model by its Ollama tag, for example `deepseek-r1:70b` (the exact tag is listed on [ollama.com](https://ollama.com)'s model page).
    - Downloading and loading the 70B weights takes several minutes.
 10. Start a new chat and select the downloaded model. DeepSeek R1 is a reasoning model, so responses include a visible "thinking" step before the final answer.
@@ -211,7 +383,7 @@ vastai create instance <OFFER_ID> \
   - **Endpoint**: the top-level object a client calls. It holds the scaling configuration (worker counts, utilization targets, timeouts). Typically one endpoint per use case/environment (production, staging, ...).
   - **Workergroup**: defines what actually runs — a serverless-compatible template plus marketplace search filters used to recruit GPU instances. An endpoint can have multiple workergroups, for example to mix models or hardware tiers.
   - **Worker**: an individual GPU instance running the model, plus a small Python process (**PyWorker**) that reports load/utilization/benchmark metrics and proxies inference requests.
-- Request flow: a client calls the Serverless SDK → the Serverless Engine picks a suitable worker and returns its address → the client sends the request directly to that worker → PyWorker forwards it to the model server and returns the result → the worker keeps reporting metrics that feed future scaling decisions.
+- Request flow: a client calls the Serverless SDK -> the Serverless Engine picks a suitable worker and returns its address -> the client sends the request directly to that worker -> PyWorker forwards it to the model server and returns the result -> the worker keeps reporting metrics that feed future scaling decisions.
 - Key scaling parameters, configurable per endpoint/workergroup:
 
 | Parameter | CLI flag | Default | Meaning |
@@ -240,7 +412,7 @@ pip install vastai
 vastai set api-key <YOUR_API_KEY>
 ```
 
-- Add a Hugging Face token under **Account Settings → Environment Variables** as `HF_TOKEN`, so every serverless worker can authenticate to download the model without embedding a secret per-worker.
+- Add a Hugging Face token under **Account Settings -> Environment Variables** as `HF_TOKEN`, so every serverless worker can authenticate to download the model without embedding a secret per-worker.
 
 ### Create the endpoint
 
@@ -273,7 +445,7 @@ vastai create workergroup \
 ```
 
 - Set `MODEL_NAME=Qwen/Qwen3.8-27B` (either via `--launch_args` as above, or in the template's environment variables in the dashboard) so the vLLM serverless template downloads and serves this model specifically.
-- Monitor worker status from the Serverless Dashboard: **Loading** (model downloading/loading into GPU memory) → **Ready** (serving traffic) → **Stopped** (model loaded, idle, ready to resume instantly). First initialization typically takes 3–5 minutes while the weights download.
+- Monitor worker status from the Serverless Dashboard: **Loading** (model downloading/loading into GPU memory) -> **Ready** (serving traffic) -> **Stopped** (model loaded, idle, ready to resume instantly). First initialization typically takes 3–5 minutes while the weights download.
 
 ### Query the endpoint
 
