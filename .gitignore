@@ -211,3 +211,4 @@ __marimo__/
 .agents/skills
 .vscode
 .DS_Store
+*.cer
