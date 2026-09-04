@@ -1,6 +1,6 @@
 # Vast.ai GPU Deployment Guide
 
-> **Companion notebook:** [`lab/vastai.ipynb`](./lab/vastai.ipynb) contains a tested, end-to-end deployment of **Qwen3.8-27B** on Vast.ai. It rents a 2×RTX 3090 instance, starts the official `ollama/ollama` image, pulls the 18 GB `qwen3.8:27b-q4_K_M` model, reaches Ollama through a private SSH tunnel, calls its OpenAI-compatible API, measures tokens per second, and destroys the instance afterward.
+> **Companion notebook:** [`lab/vastai.ipynb`](./lab/vastai.ipynb) contains the tested, end-to-end example for this guide. It rents a 2×RTX 3090 instance, starts the official `ollama/ollama` image, pulls **Qwen3.8-27B** as `qwen3.8:27b-q4_K_M`, reaches Ollama through a private SSH tunnel, calls its OpenAI-compatible API, measures tokens per second, and destroys the instance afterward.
 
 The notebook is the canonical runnable example for this guide. It deliberately keeps Ollama's unauthenticated local API off the public Internet.
 

@@ -647,4 +647,3 @@ For this project, the most sensible architecture is:
 * optional later addition of **Redis** and **RQ**
 
 This gives you a deployment-oriented project that is simple enough to learn from, but realistic enough to reflect how many real applications are structured.
-
