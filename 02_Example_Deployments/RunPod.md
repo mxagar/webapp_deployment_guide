@@ -27,17 +27,37 @@ This guide was reviewed against the current RunPod and Ollama documentation on 2
 
 ## Table of contents
 
-- [1. Why use a Pod](#1-why-use-a-pod)
-- [2. Model and hardware choice](#2-model-and-hardware-choice)
-- [3. Account, API key, and SSH setup](#3-account-api-key-and-ssh-setup)
-- [Essential `runpodctl` commands](#essential-runpodctl-commands)
-- [4. Security design](#4-security-design)
-- [5. Storage and billing](#5-storage-and-billing)
-- [6. Console deployment](#6-console-deployment)
-- [7. Automated notebook workflow](#7-automated-notebook-workflow)
-- [8. Calling Ollama](#8-calling-ollama)
-- [9. Cleanup](#9-cleanup)
-- [10. Troubleshooting](#10-troubleshooting)
+- [RunPod GPU Deployment Guide](#runpod-gpu-deployment-guide)
+  - [Official references](#official-references)
+  - [Table of contents](#table-of-contents)
+  - [1. Why use a Pod](#1-why-use-a-pod)
+  - [2. Model and hardware choice](#2-model-and-hardware-choice)
+    - [Recommended GPU](#recommended-gpu)
+    - [Why use the RunPod PyTorch image?](#why-use-the-runpod-pytorch-image)
+  - [3. Account, API key, and SSH setup](#3-account-api-key-and-ssh-setup)
+  - [Essential `runpodctl` commands](#essential-runpodctl-commands)
+    - [Authenticate and inspect the account](#authenticate-and-inspect-the-account)
+    - [Manage SSH keys](#manage-ssh-keys)
+    - [Discover GPUs and official templates](#discover-gpus-and-official-templates)
+    - [Create the guarded Qwen Pod](#create-the-guarded-qwen-pod)
+    - [Inspect and diagnose Pods](#inspect-and-diagnose-pods)
+    - [Stop, start, and terminate](#stop-start-and-terminate)
+    - [Review balance and charges](#review-balance-and-charges)
+  - [4. Security design](#4-security-design)
+  - [5. Storage and billing](#5-storage-and-billing)
+  - [6. Console deployment](#6-console-deployment)
+  - [7. Automated notebook workflow](#7-automated-notebook-workflow)
+  - [8. Calling Ollama](#8-calling-ollama)
+  - [9. Cleanup](#9-cleanup)
+  - [10. Troubleshooting](#10-troubleshooting)
+    - [No GPU is available](#no-gpu-is-available)
+    - [No public IP or SSH port appears](#no-public-ip-or-ssh-port-appears)
+    - [SSH asks for a password](#ssh-asks-for-a-password)
+    - [SSH host-key mismatch](#ssh-host-key-mismatch)
+    - [Ollama does not start](#ollama-does-not-start)
+    - [Model pull fills the disk](#model-pull-fills-the-disk)
+    - [Out of memory](#out-of-memory)
+    - [HTTP 524 or requests stop after 100 seconds](#http-524-or-requests-stop-after-100-seconds)
 
 ## 1. Why use a Pod
 
@@ -71,6 +91,20 @@ This fit remains workload-dependent. If Ollama reports an out-of-memory error at
 
 The notebook defaults to one GPU because a single 5090 is simpler than splitting this quantization across two cards. If it is unavailable, change `RUNPOD_GPU_TYPE` to `NVIDIA A40` or `NVIDIA L40S`. Override `RUNPOD_GPU_COUNT` or `OLLAMA_CONTEXT_LENGTH` only when required.
 
+### Why use the RunPod PyTorch image?
+
+The notebook uses the pinned image `runpod/pytorch:1.0.3-cu1281-torch291-ubuntu2404` for the surrounding Pod environment, not because Ollama requires PyTorch. This tag exists in RunPod's registry and is also the image used in the current [`runpodctl pod create` documentation](https://docs.runpod.io/runpodctl/reference/runpodctl-pod). This guide is deliberately **SSH-first**: RunPod's official PyTorch templates have an SSH server and the required connection setup preconfigured, so the notebook can install Ollama, inspect the GPU and logs, and reach the API through an authenticated SSH tunnel. RunPod also uses its PyTorch template in the [official Ollama-on-a-Pod tutorial](https://docs.runpod.io/tutorials/pods/run-ollama).
+
+The official `ollama/ollama:latest` image is a valid and more direct choice when the only requirement is to start Ollama. Its documented container workflow starts the Ollama service and exposes port `11434`, but it does not provide RunPod's preconfigured full SSH environment. Using it with this notebook would therefore require a custom image or startup command that installs and starts `sshd`, handles the authorized public key, and starts Ollama. See the [RunPod SSH requirements for custom images](https://docs.runpod.io/pods/configuration/use-ssh) and the [official Ollama container instructions](https://hub.docker.com/r/ollama/ollama).
+
+That distinction matters for security. Ollama has no built-in API authentication, so exposing `11434/http` through a public proxy is not equivalent to protecting it with the RunPod API key. The current design exposes only `22/tcp`, binds Ollama to Pod-local `127.0.0.1:11434`, and carries requests through SSH key authentication:
+
+```text
+Local client -> authenticated SSH tunnel -> Pod 127.0.0.1:11434 -> Ollama
+```
+
+Do not substitute `runpod/pytorch:latest`: RunPod does not currently publish that tag, so Pod creation fails with an image-not-found error. Keeping a reviewed versioned tag also prevents an upstream image update from silently changing the deployment. `RUNPOD_IMAGE` remains configurable through `.env` when you intentionally test a newer tag from the official [`runpod/pytorch` registry](https://hub.docker.com/r/runpod/pytorch/tags).
+
 ## 3. Account, API key, and SSH setup
 
 Create a RunPod account, add credit, and generate a dedicated API key in account settings. Prefer a newly generated key with the minimum permissions that still allow the Pod operations you need; avoid reusing a legacy or unrelated automation key.
@@ -84,7 +118,7 @@ brew install runpod/runpodctl/runpodctl
 Then use the interactive diagnostic command. It configures both API and SSH access without placing the API key in this repository:
 
 ```bash
-runpodctl doctor
+runpodctl doctor  # An API key is required for this command, created in the RunPod console
 runpodctl version
 runpodctl user
 ```
@@ -95,38 +129,46 @@ RunPod stores CLI credentials under `~/.runpod/config.toml`. Treat that file lik
 chmod 600 ~/.runpod/config.toml
 ```
 
-The notebook's local `.env` contains deployment preferences, but does not need the API key because `runpodctl` handles authentication:
+Create a dedicated SSH key pair and upload only its public half:
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/id_runpod_ed25519 -C "runpod"
+chmod 600 ~/.ssh/id_runpod_ed25519
+runpodctl ssh add-key --key-file ~/.ssh/id_runpod_ed25519.pub
+runpodctl ssh list-keys
+```
+
+This creates two different files:
+
+- `~/.ssh/id_runpod_ed25519` is the **private key**. It stays on your computer and is used by `ssh -i`.
+- `~/.ssh/id_runpod_ed25519.pub` is the **public key**. This is the file uploaded to RunPod.
+
+The notebook's local `.env` contains both paths explicitly. It does not need the API key because `runpodctl` handles API authentication:
 
 ```dotenv
-RUNPOD_SSH_KEY_PATH=/absolute/path/to/id_runpod_ed25519
+# Private key used locally by SSH. Never upload or commit this file.
+RUNPOD_SSH_KEY_PATH=~/.ssh/id_runpod_ed25519
+
+# Public key uploaded with `runpodctl ssh add-key`.
+RUNPOD_SSH_PUBLIC_KEY_PATH=~/.ssh/id_runpod_ed25519.pub
 
 # Optional overrides
 # RUNPOD_CLOUD_TYPE=COMMUNITY
 # RUNPOD_GPU_TYPE=NVIDIA GeForce RTX 5090
 # RUNPOD_GPU_COUNT=1
-# RUNPOD_IMAGE=runpod/pytorch:latest
+# RUNPOD_IMAGE=runpod/pytorch:1.0.3-cu1281-torch291-ubuntu2404
 # RUNPOD_POD_ID=
-# RUNPOD_TERMINATE_AFTER=4h
 # OLLAMA_MODEL=qwen3.8:27b-q4_K_M
 # OLLAMA_CONTEXT_LENGTH=32768
 ```
 
-The `.env` file and private key must not be committed. Dedicated API and SSH keys make revocation easier.
+`RUNPOD_SSH_KEY_PATH` intentionally does **not** end in `.pub`: the SSH client needs the private key for authentication. `RUNPOD_SSH_PUBLIC_KEY_PATH` does end in `.pub` and is safe to upload. If the public-key variable is omitted, the notebook derives it by appending `.pub` to the private-key path.
 
-Generate an SSH key if necessary:
-
-```bash
-ssh-keygen -t ed25519 -f ~/.ssh/id_runpod_ed25519 -C "runpod"
-chmod 600 ~/.ssh/id_runpod_ed25519
-```
-
-The notebook reads the matching `.pub` file and passes only the public key to the Pod as `PUBLIC_KEY`. RunPod's official PyTorch image documents that this variable installs the key and starts SSH on port 22.
-
-You may alternatively register the public key in RunPod account settings. Never put the private key itself in a Pod environment variable.
+The `.env` file and private key must not be committed. The notebook reads the public key and also passes it to the official RunPod image as `PUBLIC_KEY`, ensuring that the corresponding private key can authenticate to port 22. Never put the private key itself in a Pod environment variable.
 
 ## Essential `runpodctl` commands
 
-`runpodctl` emits JSON by default, which makes it suitable for notebooks and automation. Add `--output=table` for interactive reading or `--output=yaml` when preferred.
+`runpodctl` emits JSON by default, which makes it suitable for notebooks and automation. Current CLI versions support only `json` and `yaml` output; `table` is not a valid format. Add `--output=yaml` (or `-o yaml`) when YAML is easier to read.
 
 ### Authenticate and inspect the account
 
@@ -140,6 +182,7 @@ runpodctl user
 ### Manage SSH keys
 
 ```bash
+# Upload the public key, never the private key:
 runpodctl ssh add-key --key-file ~/.ssh/id_runpod_ed25519.pub
 runpodctl ssh list-keys
 runpodctl ssh info POD_ID
@@ -150,8 +193,8 @@ The `info` command returns the current SSH command for a Pod. Keep the private k
 ### Discover GPUs and official templates
 
 ```bash
-runpodctl gpu list --output=table
-runpodctl template search pytorch --type official --output=table
+runpodctl gpu list
+runpodctl template search pytorch --type official
 ```
 
 GPU inventory changes continuously. Confirm that the requested GPU is available immediately before provisioning.
@@ -163,7 +206,7 @@ The notebook constructs the equivalent command using a JSON-encoded public-key e
 ```bash
 runpodctl pod create \
   --name ollama-qwen3-8-27b-q4 \
-  --image runpod/pytorch:latest \
+  --image runpod/pytorch:1.0.3-cu1281-torch291-ubuntu2404 \
   --gpu-id "NVIDIA GeForce RTX 5090" \
   --gpu-count 1 \
   --cloud-type COMMUNITY \
@@ -173,16 +216,19 @@ runpodctl pod create \
   --container-disk-in-gb 50 \
   --volume-in-gb 40 \
   --volume-mount-path /workspace \
-  --terminate-after 4h \
   --env '{"PUBLIC_KEY":"ssh-ed25519 AAAA..."}'
 ```
 
-`--terminate-after 4h` is an important backstop: it permanently deletes the Pod after four hours even if the notebook or local computer disappears. Choose a duration that safely covers model download and testing. It complements cleanup; it is not a reason to leave resources unattended.
+In `runpodctl` 2.12.0, `pod create` does not provide a `--terminate-after` flag. Do not add it: the command will fail with `unknown flag`. This workflow consequently has no CLI-configured automatic deletion backstop. Keep the RunPod console open during the experiment, delete the Pod explicitly when finished, and confirm its absence with `runpodctl pod list --all`. Account spending limits and billing alerts are useful secondary safeguards, but they do not replace deletion.
+
+![RunPod Console: Deployment](./assets/runpod_deploy_console.png)
+
+![RunPod Console: Pod Details](./assets/runpod_pod_details.png)
 
 ### Inspect and diagnose Pods
 
 ```bash
-runpodctl pod list --all --output=table
+runpodctl pod list --all
 runpodctl pod get POD_ID
 runpodctl ssh info POD_ID
 runpodctl doctor
@@ -190,13 +236,15 @@ runpodctl doctor
 
 `pod get` includes resource and connection details. Once connected by SSH, use `nvidia-smi`, `ollama ps`, `df -h /workspace`, and `/workspace/ollama-serve.log` for workload-level debugging.
 
+In `runpodctl` 2.12.0, `pod get` reports the mapped SSH address under the nested `ssh.ip` and `ssh.port` fields. Older examples may refer to top-level `publicIp` and `portMappings`; the companion notebook accepts both response shapes.
+
 ### Stop, start, and terminate
 
 ```bash
 runpodctl pod stop POD_ID
 runpodctl pod start POD_ID
 runpodctl pod delete POD_ID
-runpodctl pod list --all --output=table
+runpodctl pod list --all
 ```
 
 Stopping and deleting are not equivalent:
@@ -299,9 +347,9 @@ Paid operations are guarded:
 - `DELETE_POD = False` prevents accidental deletion.
 - `RUNPOD_POD_ID` lets the notebook resume an existing Pod without creating another one.
 
-Before setting `CREATE_POD = True`, inspect the configured image, cloud type, GPU, GPU count, storage, automatic termination deadline, and current account balance.
+Before setting `CREATE_POD = True`, inspect the configured image, cloud type, GPU, GPU count, storage, and current account balance. Your installed CLI does not configure automatic Pod deletion, so plan to run the cleanup cell and verify deletion as soon as the experiment ends.
 
-`latest` is convenient but mutable. For repeatable or production use, replace `RUNPOD_IMAGE` with a reviewed, pinned official RunPod image tag.
+The default `RUNPOD_IMAGE` is pinned because `runpod/pytorch:latest` is not published. Before intentionally changing the tag, confirm that the exact value exists in the official [`runpod/pytorch` registry](https://hub.docker.com/r/runpod/pytorch/tags).
 
 ## 8. Calling Ollama
 
