@@ -1,0 +1,3 @@
+[submodule "notes_webapp"]
+	path = notes_webapp
+	url = https://github.com/mxagar/notes_webapp.git
