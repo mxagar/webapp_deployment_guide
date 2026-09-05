@@ -19,6 +19,11 @@ CLI 5.49.1 on 2026-09-04.
 - [IaC TypeScript reference](https://docs.railway.com/infrastructure-as-code/reference)
 - [`railway config` CLI reference](https://docs.railway.com/cli/config)
 - [Deploying with the CLI](https://docs.railway.com/cli/deploying)
+- [Railway for agents](https://docs.railway.com/agents)
+- [`railway setup agent` CLI reference](https://docs.railway.com/cli/setup)
+- [Railway MCP server](https://docs.railway.com/ai/mcp-server)
+- [Railway Cloud Agents](https://docs.railway.com/cloud-agents)
+- [Pricing](https://docs.railway.com/pricing)
 - [GitHub autodeploys](https://docs.railway.com/deployments/github-autodeploys)
 - [Deploying Django](https://docs.railway.com/guides/django)
 - [PostgreSQL](https://docs.railway.com/databases/postgresql)
@@ -36,6 +41,9 @@ CLI 5.49.1 on 2026-09-04.
   - [1. Railway's resource model and brief overview](#1-railways-resource-model-and-brief-overview)
   - [2. Target architecture and overview of deployed services with their options](#2-target-architecture-and-overview-of-deployed-services-with-their-options)
   - [3. Prerequisites and account setup](#3-prerequisites-and-account-setup)
+    - [Install the Railway CLI](#install-the-railway-cli)
+    - [Log in to Railway](#log-in-to-railway)
+    - [Set up Railway agent tools](#set-up-railway-agent-tools)
   - [4. Prepare the application](#4-prepare-the-application)
   - [5. Define the project with Railway IaC](#5-define-the-project-with-railway-iac)
   - [6. Create isolated dev and prod environments](#6-create-isolated-dev-and-prod-environments)
@@ -267,6 +275,89 @@ railway whoami --json
 For automated CI/CD, use a Railway project or account token instead of an
 interactive login; never commit that token to the repository.
 
+### Set up Railway agent tools
+
+This step is optional when using only the Railway CLI, but recommended when an
+AI coding agent such as Codex will help operate Railway. If neither the CLI nor
+the agent integrations is installed yet, Railway provides a combined bootstrap:
+
+```bash
+curl -fsSL agents.railway.com | sh
+```
+
+Use that command instead of the separate CLI installers above; it installs or
+reuses the Railway CLI and then configures detected agent tools. If the CLI is
+already installed, run the interactive agent setup after logging in:
+
+```bash
+railway setup agent
+```
+
+The command detects supported coding tools, asks which ones to configure, and
+can install two complementary integrations:
+
+- the `use-railway` agent skill, which gives the coding agent Railway-specific
+  operational instructions;
+- the Railway MCP server, which gives the agent authenticated tools for working
+  with Railway projects and resources.
+
+`railway setup agent` only writes local skill and coding-tool configuration. It
+does not launch a remote coding agent, create a Railway VM, deploy a service, or
+start billable compute. Codex continues to run in its existing local or hosted
+Codex environment and uses the configured CLI or MCP connection to control
+Railway.
+
+The similarly named Railway capabilities have different execution and billing
+behavior:
+
+| Command or capability | What runs where | Railway billing effect |
+| --- | --- | --- |
+| `railway setup agent` | Configures skills and MCP for the local coding tool | No new compute or Railway Agent charge merely for setup |
+| `railway mcp` | Connects the existing coding agent to Railway's hosted MCP API | No compute charge merely for connecting; actions can create normal billable resources, and an explicit Railway Agent call can consume agent tokens |
+| `railway agent` | Runs Railway's hosted AI agent for chat and infrastructure operations | Billed according to the LLM tokens it consumes, after applicable plan credits |
+| `railway ca` or `railway code` | Runs a coding agent on a persistent Railway Cloud Agent VM | VM compute is billed while it is running; a sleeping Cloud Agent does not bill for compute |
+
+The application's existing web and database services retain their ordinary
+Railway resource costs independently of agent setup. Installing these tools
+does not require any change to `.railway/railway.ts`.
+
+The default MCP configuration runs `railway mcp` and reuses the credentials
+created by `railway login`. If the coding tool should connect directly to
+Railway's hosted MCP server and manage its own OAuth authorization, run:
+
+```bash
+railway setup agent --oauth
+```
+
+This OAuth option changes how the MCP connection authenticates; it does not
+move Codex to a Railway VM. Only an explicit Cloud Agent command such as
+`railway ca` or `railway code` launches that kind of remote environment.
+
+For unattended setup with the detected defaults, use:
+
+```bash
+railway setup agent --yes
+```
+
+The `--yes` form skips the interactive login flow. If the CLI is not already
+authenticated, run `railway login` afterward.
+
+To install or update only the Codex integrations instead of running the combined
+setup, use the more granular commands:
+
+```bash
+railway skills install --agent codex
+railway mcp install --agent codex
+```
+
+Restart Codex or the selected coding tool after setup so it discovers the new
+skill and MCP configuration. The Railway CLI root help includes an agent-tooling
+health summary that can be used to verify the installation:
+
+```bash
+railway --help 2>&1 | grep -A4 "Agent tooling:"
+```
+
 In Railway, open **Account Settings -> Integrations -> GitHub** and confirm that
 the GitHub App can access `mxagar/notes_webapp`. Connecting an account is not
 enough when the GitHub App installation is limited to selected repositories.
@@ -278,10 +369,18 @@ The example app already provides Railway's essential runtime contract:
 - a root [`Dockerfile`](../notes_webapp/Dockerfile);
 - Gunicorn bound to `0.0.0.0:$PORT`;
 - PostgreSQL configured from `DATABASE_URL`;
-- WhiteNoise for static assets;
-- a database-aware `GET /health/` endpoint;
-- proxy-aware HTTPS settings;
-- database migrations and `collectstatic` commands.
+- **Static-file collection with `collectstatic` and WhiteNoise.** `collectstatic` is not a separate package: it is a Django management command supplied by `django.contrib.staticfiles`. It discovers the CSS, JavaScript, images, and other static files from the project and installed Django apps, then copies them into the directory configured by `STATIC_ROOT`. WhiteNoise, by contrast, is a third-party Python package installed by this application. Its Django middleware serves the collected files from the application container and its storage backend creates compressed versions. This small deployment therefore does not need a separate static-file server. WhiteNoise handles application assets, not user-uploaded media.
+- **A database-aware `GET /health/` endpoint.** The view executes `SELECT 1` against PostgreSQL before returning `{"status": "ok"}` with HTTP 200. It therefore proves that both Django and its database connection are ready. Railway calls this endpoint during a deployment and activates the new version only after the check succeeds; it is a deployment readiness check rather than continuous uptime monitoring.
+- **Proxy-aware HTTPS settings.** The browser establishes HTTPS with Railway's edge proxy, while the proxy can communicate with the container over HTTP and pass `X-Forwarded-Proto: https`. Django trusts that header through `SECURE_PROXY_SSL_HEADER`, so it recognizes the original request as secure and avoids redirect loops. The production settings also enable secure cookies, HTTPS redirects, and HSTS.
+- **Database migrations.** A Django migration is a version-controlled description of a database-schema change, such as creating a model's table or adding a field. `manage.py migrate --noinput` applies the unapplied migration files to the environment's PostgreSQL database. It is separate from `collectstatic`, which prepares files and does not modify the database.
+
+For this deployment, the startup sequence is:
+
+1. Railway runs `manage.py migrate --noinput` as a pre-deploy command.
+2. The container entrypoint runs `manage.py collectstatic --noinput`.
+3. The entrypoint starts Gunicorn on Railway's injected `PORT`.
+4. Railway requests `/health/` and routes traffic to the new deployment after
+   receiving HTTP 200.
 
 Railway injects `PORT`; the application must listen on that value rather than a
 fixed local port. Railway also injects `RAILWAY_PUBLIC_DOMAIN` after a public
@@ -304,7 +403,8 @@ The container entrypoint normally migrates the local Compose database. On
 Railway, `RUN_MIGRATIONS_ON_STARTUP=false` disables that behavior because IaC
 defines a pre-deploy migration command. This runs migrations once before the
 new application instance starts and prevents every replica from racing to run
-the same migration.
+the same migration. The entrypoint still runs `collectstatic` before Gunicorn
+starts, and WhiteNoise then serves those collected assets.
 
 ## 5. Define the project with Railway IaC
 
@@ -362,7 +462,7 @@ railway init \
 ```
 
 Rename the default `production` environment to `prod` in **Project Settings ->
-Environments**, then link it:
+Environments** (web UI), then link it:
 
 ```bash
 railway environment link prod
@@ -503,7 +603,7 @@ Configure both environment-scoped source connections explicitly:
 
 ```bash
 railway service source connect \
-  --project 62048fed-99b6-490c-b5c0-849a6cb08725 \
+  --project <PROJECT_ID> \
   --environment dev \
   --service web \
   --repo mxagar/notes_webapp \
@@ -511,7 +611,7 @@ railway service source connect \
   --json
 
 railway service source connect \
-  --project 62048fed-99b6-490c-b5c0-849a6cb08725 \
+  --project <PROJECT_ID> \
   --environment prod \
   --service web \
   --repo mxagar/notes_webapp \
@@ -731,10 +831,10 @@ The deployment was completed on 2026-09-04 with these resources:
 | Item | Value |
 | --- | --- |
 | Workspace | `Mikel's Projects` |
-| Project | `notes-app` (`62048fed-99b6-490c-b5c0-849a6cb08725`) |
+| Project | `notes-app` (`xxx`) |
 | Source | `mxagar/notes_webapp` |
 | Branch mapping | `main -> dev`; `main -> prod` |
-| Deployed commit | `3ccb7a62d50ae779776b2fb487d2b76f343739bf` |
+| Deployed commit | `xxx` |
 | Builder | Root `Dockerfile` |
 | Runtime region | `ams` |
 | Database | Railway-managed PostgreSQL 18, one isolated instance per environment |
@@ -746,8 +846,8 @@ deployments were:
 
 | Environment | Deployment ID | Public URL |
 | --- | --- | --- |
-| `dev` | `4f515270-f2d8-45c2-9162-548d2231667c` | <https://web-dev-c25d.up.railway.app> |
-| `prod` | `f2b76756-2a8d-4150-8e63-2f2733ee2cda` | <https://web-prod-23f1.up.railway.app> |
+| `dev` | `xxx` | <https://xxx.up.railway.app> |
+| `prod` | `xxx` | <https://xxx.up.railway.app> |
 
 Live checks returned `{"status": "ok"}` with HTTP 200 from both `/health/`
 endpoints. Each root URL returned HTTP 302 to `/accounts/login/`, which is the
@@ -775,12 +875,6 @@ The app repository was updated and pushed to support the deployment:
 - `/health/` is exempt from Django's internal HTTP-to-HTTPS redirect only when
   the app is running in a Railway environment.
 - `README.md` documents the Railway-specific behavior and maintenance commands.
-
-The relevant app commits are:
-
-- `fed2e0e` — add Railway deployment configuration;
-- `f829124` — allow Railway's health-check hostname;
-- `3ccb7a6` — exempt the internal health probe from the HTTPS redirect.
 
 ### What the first deployment taught us
 
