@@ -30,21 +30,41 @@ CLI 5.49.1 on 2026-09-04.
 
 ## Table of contents
 
-- [1. Railway's resource model](#1-railways-resource-model)
-- [2. Target architecture](#2-target-architecture)
-- [3. Prerequisites and account setup](#3-prerequisites-and-account-setup)
-- [4. Prepare the application](#4-prepare-the-application)
-- [5. Define the project with Railway IaC](#5-define-the-project-with-railway-iac)
-- [6. Create isolated dev and prod environments](#6-create-isolated-dev-and-prod-environments)
-- [7. Configure secrets and connect GitHub](#7-configure-secrets-and-connect-github)
-- [8. Deploy and expose the application](#8-deploy-and-expose-the-application)
-- [9. Development and delivery workflow](#9-development-and-delivery-workflow)
-- [10. Operate the deployment](#10-operate-the-deployment)
-- [11. Security, persistence, and cost](#11-security-persistence-and-cost)
-- [12. Troubleshooting](#12-troubleshooting)
-- [13. Exemplary notes_webapp deployment](#13-exemplary-notes_webapp-deployment)
+- [Railway Web Application Deployment Guide](#railway-web-application-deployment-guide)
+  - [Official references](#official-references)
+  - [Table of contents](#table-of-contents)
+  - [1. Railway's resource model and brief overview](#1-railways-resource-model-and-brief-overview)
+  - [2. Target architecture and overview of deployed services with their options](#2-target-architecture-and-overview-of-deployed-services-with-their-options)
+  - [3. Prerequisites and account setup](#3-prerequisites-and-account-setup)
+  - [4. Prepare the application](#4-prepare-the-application)
+  - [5. Define the project with Railway IaC](#5-define-the-project-with-railway-iac)
+  - [6. Create isolated dev and prod environments](#6-create-isolated-dev-and-prod-environments)
+  - [7. Configure secrets and connect GitHub](#7-configure-secrets-and-connect-github)
+  - [8. Deploy and expose the application](#8-deploy-and-expose-the-application)
+  - [9. Development and delivery workflow](#9-development-and-delivery-workflow)
+    - [Branch mapping used by this example](#branch-mapping-used-by-this-example)
+    - [Conventional two-branch workflow](#conventional-two-branch-workflow)
+  - [10. Operate the deployment](#10-operate-the-deployment)
+    - [Inspect context and deployments](#inspect-context-and-deployments)
+    - [Read bounded logs](#read-bounded-logs)
+    - [Inspect metrics](#inspect-metrics)
+    - [Redeploy or restart](#redeploy-or-restart)
+  - [11. Security, persistence, and cost](#11-security-persistence-and-cost)
+  - [12. Troubleshooting](#12-troubleshooting)
+    - [GitHub repository is unavailable](#github-repository-is-unavailable)
+    - [IaC cannot import `railway/iac`](#iac-cannot-import-railwayiac)
+    - [IaC plan targets the wrong environment](#iac-plan-targets-the-wrong-environment)
+    - [Build fails](#build-fails)
+    - [Application crashes with a missing secret](#application-crashes-with-a-missing-secret)
+    - [Database connection or migration fails](#database-connection-or-migration-fails)
+    - [Deployment never becomes healthy](#deployment-never-becomes-healthy)
+    - [DisallowedHost or CSRF failure](#disallowedhost-or-csrf-failure)
+  - [13. Exemplary notes\_webapp deployment](#13-exemplary-notes_webapp-deployment)
+    - [Deployment record](#deployment-record)
+    - [Changes made to notes\_webapp](#changes-made-to-notes_webapp)
+    - [What the first deployment taught us](#what-the-first-deployment-taught-us)
 
-## 1. Railway's resource model
+## 1. Railway's resource model and brief overview
 
 Railway organizes a deployment into several scopes:
 
@@ -65,7 +85,29 @@ Railway creates a `production` environment for a new project by default. This
 example renames it to `prod` and duplicates it as `dev`, matching the short
 environment names used in the rest of this repository.
 
-## 2. Target architecture
+The Railway dashboard provides a visual overview of the project's resources, environments, and deployments.
+
+![Railway Dashboard](./assets/railway_dashboard.png)
+
+Menus on the dashboard:
+
+- Workspace: Lists all workspaces the user has access to.
+  - In paid plans (>= 20 USD/month), we can invite users to the workspace.
+- Projects: Lists all projects in the current workspace.
+- Templates:
+  - We can [create our deployment templates](https://docs.railway.com/templates#creating-a-template).
+  - There are many [available templates](https://railway.com/deploy): pgvector, n8n, Affine, Hermes, Langfuse, Open Web UI, etc.
+- Usage:
+  - Per project: vCPU, RAM, and storage usage.
+  - Limits and alerts can be configured for resource usage.
+- People: In paid plans (>= 20 USD/month), we can invite users to the workspace.
+
+Two important points to note:
+
+- Railway creates a private network automatically in an environment.
+- Railway can scale replicas if necessary.
+
+## 2. Target architecture and overview of deployed services with their options
 
 Each environment contains the same topology but different running resources
 and data:
@@ -100,6 +142,58 @@ Railway does not run the repository's `docker-compose.yaml` directly. It builds
 the `web` service from the root `Dockerfile`, while Railway's managed Postgres
 resource replaces the local Compose database service.
 
+Once the app/project is deployed, we see this diagram:
+
+![Railway project: Notes app](./assets/railway_project_notes_app.png)
+
+We can always add a new service, i.e., a new box with a function clicking on `Add`:
+
+- GitHub Repository
+- Database: PostgreSQL, Redis, MongoDB, MySQL
+- Docker image: we enter the registry URL
+- Template (many available, se above)
+- Function: serverless function that can be triggered by HTTP requests or events
+- Bucket: object storage for files and assets
+- Volume: We attach a volume to a service for persistent storage; e.g., databases have always volumes, but other services can have them too, even though it is less common (and probably should be avoided).
+
+On the left column menu of the project:
+
+- Observability: We can add items such as CPU usage, Memory usage, Network egress, Disk usage, Logs, HTTP requests, etc.
+- Logs: We can browse and search in the logs
+- Settings:
+  - General: project info, id, etc.
+  - Usage
+  - Environments: defined here.
+  - Shared variables
+  - Webhooks
+  - Members
+  - Danger
+  - etc.
+
+Additionally, we can click on each service and view its details.
+
+Postgres service details:
+
+- Deployments list
+- Database: tables visualized, SQL queries can be run
+- Backups: in paid plans PITR (Point-In-Time Recovery) volumes are attached and managed
+- Variables: all variables and secrets associated with the service
+- Metrics
+- Console: access to the service's console for direct interaction; we can also get the `railway` SSH command to access from our local machine
+- Settings: image, network, location, scaling, etc.
+
+![PostgreSQL Service](./assets/railway_notes_app_postgresql.png)
+
+Web service details (Django): We can the same as the Postgres service, including deployments, variables, metrics, console, and settings. Probably a key feature is the access to the service container console:
+
+![Web Service Console](./assets/railway_notes_app_web_console.png)
+
+We can also get the `railway` SSH command to access the service container from our local machine.
+
+```bash
+railway ssh --project=<PROJECT_ID> --environment=<ENVIRONMENT_ID> --service=<SERVICE_ID>
+```
+
 ## 3. Prerequisites and account setup
 
 Requirements:
@@ -110,16 +204,68 @@ Requirements:
 - the Railway GitHub App authorized for `mxagar/notes_webapp`;
 - Git, Node.js, npm, Python 3.12, and uv for local work.
 
-Check the CLI and authenticated identity:
+### Install the Railway CLI
+
+Choose **one** installation method. On macOS, Homebrew is the simplest:
 
 ```bash
+brew install railway
+```
+
+Alternatively, install it with npm on macOS, Linux, or Windows. This method
+requires Node.js 16 or newer:
+
+```bash
+npm install --global @railway/cli
+```
+
+Railway also provides an installation script for macOS, Linux, and Windows
+through WSL:
+
+```bash
+bash <(curl -fsSL https://railway.com/install.sh)
+```
+
+Do not run all three installers. Verify the selected installation:
+
+```bash
+command -v railway
 railway --version
+```
+
+Use `railway upgrade` later to update an existing installation.
+
+### Log in to Railway
+
+Run the interactive login command on a computer with a browser:
+
+```bash
+railway login
+```
+
+The CLI opens Railway in the default browser. Sign in, authorize the CLI, and
+return to the terminal when authentication completes. The same flow can create
+a Railway account when the user does not have one yet.
+
+On a genuinely headless computer, such as a remote server accessed through
+SSH, use the device-code flow instead:
+
+```bash
+railway login --browserless
+```
+
+Open the URL printed by the command and enter its pairing code. Do not use this
+option for a normal local desktop session because `railway login` already opens
+the local browser directly.
+
+Finally, confirm the authenticated identity:
+
+```bash
 railway whoami --json
 ```
 
-If authentication is missing, run `railway login`. Railway normally opens the
-browser on the same computer; use browserless authentication only on a truly
-headless machine.
+For automated CI/CD, use a Railway project or account token instead of an
+interactive login; never commit that token to the repository.
 
 In Railway, open **Account Settings -> Integrations -> GitHub** and confirm that
 the GitHub App can access `mxagar/notes_webapp`. Connecting an account is not
