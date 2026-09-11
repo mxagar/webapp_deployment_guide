@@ -33,9 +33,29 @@ Table of Contents:
     - [Deploying Portainer and the Initial Portainer Setup](#deploying-portainer-and-the-initial-portainer-setup)
     - [Portainer UI Walkthrough](#portainer-ui-walkthrough)
   - [7. Secure Web Service Access with TDSProxy and Tailscale](#7-secure-web-service-access-with-tdsproxy-and-tailscale)
+    - [Deploying a File Browser for File Management](#deploying-a-file-browser-for-file-management)
+    - [Introduction to Configuring TDSProxy for Tailscale-Based HTTPS Access](#introduction-to-configuring-tdsproxy-for-tailscale-based-https-access)
+    - [Tailscale Account Configuration: Renaming your Tailnet and Enabling HTTPS](#tailscale-account-configuration-renaming-your-tailnet-and-enabling-https)
+    - [Deploying TDSProxy](#deploying-tdsproxy)
+    - [Configuring File Browser for Use with TDSProxy](#configuring-file-browser-for-use-with-tdsproxy)
+    - [Configuring Portainer for User with TDSProxy](#configuring-portainer-for-user-with-tdsproxy)
+    - [Finding Open Ports on your Docker Host](#finding-open-ports-on-your-docker-host)
   - [8. Building a Centralized Dashboard](#8-building-a-centralized-dashboard)
+    - [Introduction to Setting Up HomePage as Self-Hosted Dashboard](#introduction-to-setting-up-homepage-as-self-hosted-dashboard)
+    - [Deploying HomePage with Portainer](#deploying-homepage-with-portainer)
+    - [HomePage Overview and Features](#homepage-overview-and-features)
+    - [Customizing HomePage](#customizing-homepage)
+    - [Installing IT-Tools: Convert `docker run` to `docker compose`](#installing-it-tools-convert-docker-run-to-docker-compose)
   - [9. Publishing Services on Your Own Domain](#9-publishing-services-on-your-own-domain)
+    - [Introduction to Accessing Self-Hosted Services Using your Own Domain with Caddy](#introduction-to-accessing-self-hosted-services-using-your-own-domain-with-caddy)
+    - [Setting Up a Domain and DNS for Self-Hosted Services with Cloudflare](#setting-up-a-domain-and-dns-for-self-hosted-services-with-cloudflare)
+    - [Configuring Cloudflare DNS and Deploying Caddy as Reverse Proxy](#configuring-cloudflare-dns-and-deploying-caddy-as-reverse-proxy)
+    - [Making Your Self-Hosted Services Public with Cloudflare Tunnels](#making-your-self-hosted-services-public-with-cloudflare-tunnels)
   - [10. Discovering \& Deploying Additional Self-Hosted Services and Applications](#10-discovering--deploying-additional-self-hosted-services-and-applications)
+    - [Intro to Finding, Evaluating, and Deploying Self-Hosted Services and Solutions](#intro-to-finding-evaluating-and-deploying-self-hosted-services-and-solutions)
+    - [Finding Self-Hosted Solutions: Directories, Search Engines, and Communities](#finding-self-hosted-solutions-directories-search-engines-and-communities)
+    - [How to Evaluate Self-Hosted Applications](#how-to-evaluate-self-hosted-applications)
+    - [Deploying Self-Hosted Applications Using Docker, Docker Compose, or Portainer](#deploying-self-hosted-applications-using-docker-docker-compose-or-portainer)
 
 
 ## 1. Introduction
@@ -841,12 +861,447 @@ docker compose up -d
 
 ### Deploying Portainer and the Initial Portainer Setup
 
+- Start Portainer from the directory that contains its Compose file.
+  - The course deployment directory is `/opt/docker/portainer`.
+  - `docker compose up -d` creates and starts the services defined in `compose.yaml`.
+  - `-d` means detached mode, so the containers keep running in the background.
+- Confirm that the Portainer container is running.
+  - `docker compose ps` lists the containers in the current Compose project.
+  - The Portainer service should show an `Up` status.
+- Get the Docker host's Tailscale IP address.
+  - Run `tailscale ip -4` on the server when you only need the IPv4 address.
+  - The address is unique to your tailnet, so use your own output instead of the course example.
+- Open Portainer from a device connected to the same Tailscale network.
+  - With the Compose file shown above, use `http://<tailscale-ip>:9443`.
+  - If you use a different Portainer Compose file that maps port `9000`, use `http://<tailscale-ip>:9000`.
+  - A browser certificate warning is expected before you configure trusted HTTPS for your self-hosted services. Note that we are using HTTP for initial access in this guide.
+- Create the initial Portainer administrator account promptly.
+  - Portainer asks for an admin password on first access.
+  - The course uses a shared lab password for consistency, but real servers should use a unique strong password.
+  - Store the password somewhere reliable before continuing.
+- Restart Portainer if the first-user setup times out.
+  - Portainer disables the initial setup screen after a short security timeout.
+  - Restarting the Compose project re-enables the setup flow.
+  - Return to the browser immediately after the restart and create the admin user.
+
+```bash
+cd /opt/docker/portainer
+docker compose up -d
+docker compose ps
+tailscale ip -4
+
+# If the initial admin setup times out:
+docker compose restart
+```
+
 ### Portainer UI Walkthrough
+
+- Start from the local Docker environment after logging in.
+  - Click `Get Started` in the environment wizard.
+  - Select the environment named `local`, or the equivalent local Docker host option if the interface changes.
+- Use the dashboard as a high-level inventory of Docker resources.
+  - A fresh Portainer install should show only a small number of resources.
+  - The dashboard can show counts for stacks, containers, images, volumes, and networks.
+  - Each count links to more detailed information.
+- Understand Portainer's main navigation before deploying more services.
+  - `Templates` can deploy predefined containers, applications, or services.
+  - The course mainly uses custom Compose files instead of predefined templates.
+  - `Stacks` shows related services deployed together from a Docker Compose file.
+  - Portainer appears as a stack because it was deployed with Docker Compose.
+- Use the Docker resource sections to inspect and manage the host.
+  - `Containers` lists running and stopped containers and supports actions such as start, stop, remove, and inspect.
+  - `Images` shows container images stored on the Docker host.
+  - `Networks` shows default and custom Docker networks that let containers communicate.
+  - `Volumes` manages persistent storage that survives container recreation.
+- Use the operational sections for troubleshooting and host awareness.
+  - `Events` shows Docker activity such as container starts, stops, crashes, and updates.
+  - `Host` shows machine details such as operating system, central processing unit (CPU), and memory.
+  - These views help confirm what is running before changing or exposing services.
+
+![Portainer Dashboard](./assets/portainer_dashboard.png)
+
+![Portainer Local Environment](./assets/portainer_local_environment.png)
 
 ## 7. Secure Web Service Access with TDSProxy and Tailscale
 
+### Deploying a File Browser for File Management
+
+- Use File Browser when a browser-based file manager is more comfortable than the command line interface (CLI).
+  - It can create directories, upload files, download files, and edit configuration files through a graphical user interface (GUI).
+  - The course still supports command-line workflows, so File Browser is optional.
+  - The example mount gives File Browser access to the whole server filesystem, so treat the service as sensitive.
+- Deploy File Browser from Portainer as a Docker Compose stack.
+  - Open Portainer from a device connected to the same Tailscale network.
+  - Select the `local` Docker environment.
+  - Go to `Stacks`, choose `Add stack`, and name the stack `filebrowser`.
+  - Paste or upload the lesson's `compose.yaml`.
+  - Click `Deploy the stack` after Portainer accepts the YAML.
+- Understand the File Browser Compose configuration before deployment.
+  - The `filebrowser/filebrowser:v2.32.0` image runs the File Browser container.
+  - `container_name: filebrowser` gives the container a predictable name.
+  - The `8080:80` port mapping exposes container port `80` on host port `8080`.
+  - The `/:/srv` bind mount exposes the host root filesystem inside File Browser.
+  - The `data:/data` named volume stores File Browser's database and internal settings.
+  - `FB_DATABASE: /data/database.db` tells File Browser where to store its database.
+  - `restart: unless-stopped` restarts the container after a reboot or crash unless you stop it manually.
+- Use Portainer to confirm and open the deployed stack.
+  - The stack detail page shows the container state, image, stack membership, and published ports.
+  - If published-port links use the wrong host, set the environment's public IP address to the Docker host's Tailscale IP.
+  - Run `tailscale ip -4` on the Docker host when you need that IPv4 address.
+  - Open File Browser at `http://<tailscale-ip>:8080`.
+- Secure the initial File Browser account before browsing files.
+  - The default username is `admin`.
+  - The default password is `admin`.
+  - Change the password from `Settings` after the first login.
+- Use File Browser for common server file tasks.
+  - `My Files` opens the server filesystem exposed at `/srv`.
+  - The view toggle changes how files and folders are displayed.
+  - The `/opt/docker/portainer/compose.yaml` file can be opened and edited from the browser when the host root is mounted.
+  - Save intentional edits with the save icon, or discard changes before leaving the editor.
+- Deploy the same stack from the command line when you prefer terminal-based operations.
+  - Create `/opt/docker/filebrowser`.
+  - Add the Compose file as `/opt/docker/filebrowser/compose.yaml`.
+  - Run Docker Compose from that directory.
+- Keep the project status in mind.
+  - Portainer can deploy Compose stacks from the browser, while `docker compose up -d` can deploy the same stack from the terminal.
+  - The source notes mark File Browser as archived on GitHub.
+
+```bash
+mkdir -p /opt/docker/filebrowser
+cd /opt/docker/filebrowser
+nano compose.yaml
+docker compose up -d
+```
+
+![File Browser Snapshot](./assets/filebrowser_snapshot.png)
+
+File Browser Resources:
+
+- [Filebrowser GitHub Repository](https://github.com/filebrowser/filebrowser)
+- [Filebrowser Docker Hub](https://hub.docker.com/r/filebrowser/filebrowser)
+
+Compose: [`filebrowser/compose.yaml`](./lab/self-hosted-course/docker-stacks/filebrowser/compose.yaml):
+
+```yaml
+services:
+  filebrowser:
+    image: filebrowser/filebrowser:v2.32.0
+    container_name: filebrowser
+    ports:
+      - "8080:80"
+    volumes:
+      - /:/srv
+      - data:/data
+    environment:
+      FB_DATABASE: /data/database.db
+    restart: unless-stopped
+
+volumes:
+  data:
+```
+
+### Introduction to Configuring TDSProxy for Tailscale-Based HTTPS Access
+
+- Replace raw IP-and-port URLs with service names inside your Tailscale network.
+  - Earlier lessons accessed services with addresses such as `http://<tailscale-ip>:8080`.
+  - That works, but it requires remembering both the Docker host's Tailscale IP address and each service's published port.
+  - Friendly service names are easier to remember and safer to share in notes.
+- Use TSDProxy (Tailscale Docker Proxy) to connect Docker services to Tailscale names.
+  - TSDProxy watches Docker containers and registers enabled services with Tailscale.
+  - It accepts requests for a named service and forwards them to the correct container and port.
+  - Later sections add the Docker labels and Compose configuration that tell TSDProxy which services to expose.
+- Use Tailscale HTTPS so browser access is encrypted.
+  - Tailscale can issue Transport Layer Security (TLS) certificates for names under your tailnet's DNS name.
+  - TSDProxy uses that capability to provide HTTPS access for proxied services.
+  - The result is a cleaner URL such as `https://portainer.<tailnet-name>.ts.net`.
+- Rename the tailnet before building service URLs.
+  - Tailscale creates a default tailnet DNS name such as `tailabc123.ts.net`.
+  - The default name works, but it is not especially memorable.
+  - Tailscale can generate easier "fun" tailnet names made from words separated by hyphens.
+  - The chosen tailnet name becomes part of each service's fully qualified domain name.
+- Use this setup to hide implementation details from daily access.
+  - Users connect to service names instead of host IP addresses and port numbers.
+  - TSDProxy handles the routing from each name to the correct Docker container.
+  - HTTPS keeps traffic protected while services remain available only through the Tailscale network unless you explicitly configure public exposure.
+
+### Tailscale Account Configuration: Renaming your Tailnet and Enabling HTTPS
+
+- Configure the tailnet before deploying TSDProxy.
+  - Open the Tailscale admin console in a browser.
+  - Log in to the account that owns or administers the tailnet.
+  - Go to the `DNS` settings page.
+- Rename the tailnet DNS name if the default name is hard to remember.
+  - Tailscale assigns a default name such as `tailabc123.ts.net`.
+  - A tailnet owner, admin, or network admin can choose a randomly generated memorable name.
+  - Use `Rename Tailnet`, acknowledge the warning, and reroll options until one is acceptable.
+  - The selected name becomes part of service URLs such as `https://portainer.<tailnet-name>.ts.net`.
+- Understand the rename warning before confirming.
+  - Changing the active tailnet DNS name can affect existing links that depend on MagicDNS, HTTPS certificates, or device sharing.
+  - Pick the name before creating many service URLs, bookmarks, or shared references.
+    - Example suggested names: `aegean-major`, `brown-antares`, etc.
+  - After choosing a name, confirm with `Rename Tailnet`.
+- Enable Tailscale HTTPS certificates.
+  - Stay on the `DNS` settings page and find the HTTPS certificate setting.
+  - Click `Enable HTTPS`, then confirm if prompted.
+  - TSDProxy needs this enabled so it can obtain certificates for proxied service names.
+  - If HTTPS certificates are disabled, TSDProxy may fail or show certificate-related errors.
+
+![Tailscale Web UI](./assets/tailscale_web_ui.png)
+
+### Deploying TDSProxy
+
+- Deploy TSDProxy after the Tailscale tailnet name and HTTPS certificate settings are ready.
+  - The service can be deployed from Portainer or from the command line.
+  - The course demonstrates the Portainer stack workflow.
+  - Open Portainer from a device connected to the same Tailscale network.
+  - Select the `local` environment, go to `Stacks`, and choose `Add stack`.
+- Create a Portainer stack for TSDProxy.
+  - Name the stack `tsdproxy`.
+  - Paste or upload the lesson's `compose.yaml`.
+  - Deploy the stack after Portainer validates the YAML.
+  - If the deploy button is disabled, fix the YAML error that Portainer reports.
+- Understand the service and image choices in the Compose file.
+  - The course pins `almeidapaulopt/tsdproxy:1` for the version taught in the lesson.
+  - `container_name: tsdproxy` gives the container a predictable Docker name.
+  - `8081:8080` publishes TSDProxy's internal web interface port `8080` on host port `8081`.
+  - Host ports must be unique, but different containers can reuse the same internal container port.
+- Understand the volume mounts before running the stack.
+  - `/var/run/docker.sock:/var/run/docker.sock` lets TSDProxy inspect Docker containers and labels.
+  - `data:/data` stores TSDProxy-managed data such as certificates and state in a Docker named volume.
+  - `/opt/docker/tsdproxy/config:/config` keeps editable configuration files in a known host directory.
+  - Use bind mounts for files you expect to edit directly, and named volumes for application-managed data.
+- Use labels to let TSDProxy discover services.
+  - Docker labels attach metadata to containers.
+  - `tsdproxy.enable: true` tells TSDProxy to proxy the container through a Tailscale name.
+  - `tsdproxy.ephemeral: false` keeps the Tailscale machine persistent instead of short-lived.
+  - Later service stacks use additional labels to define each proxied service name and port.
+- Authenticate TSDProxy with Tailscale after deployment.
+  - Open the TSDProxy dashboard at `http://<tailscale-ip>:8081`.
+  - Click the `authenticating` entry to start the Tailscale login flow.
+  - Log in to Tailscale and approve the new device or service connection.
+  - Confirm that TSDProxy appears in the Tailscale machines list.
+- Disable key expiry for long-running self-hosted services when appropriate.
+  - Tailscale machines normally require periodic re-authentication.
+  - Expired keys can break access until the service is re-authenticated.
+  - Use the machine's menu in the Tailscale dashboard and choose `Disable Key Expiry` when you want persistent service access.
+- Test access through the Tailscale service name.
+  - The named URL follows the pattern `https://proxy.<tailnet-name>.ts.net`.
+  - The first request can take a little time while TSDProxy joins Tailscale, provisions certificates, and starts proxying.
+  - Wait and reload if the first attempt fails.
+  - A successful HTTPS load confirms that the certificate and proxy path are working.
+
+TDSProxy links:
+
+- [TSDProxy GitHub Repository](https://github.com/almeidapaulopt/tsdproxy)
+- [TSDProxy Docker Hub Repository](https://hub.docker.com/r/almeidapaulopt/tsdproxy/)
+
+TSDProxy compose file: [`tsdproxy/compose.yaml`](./lab/self-hosted-course/docker-stacks/tsdproxy/compose.yaml):
+
+```yaml
+services:
+  tsdproxy:
+    image: almeidapaulopt/tsdproxy:1
+    container_name: tsdproxy
+    ports:
+      - "8081:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - data:/data
+      - /opt/docker/tsdproxy/config:/config
+    labels:
+      tsdproxy.enable: true
+      tsdproxy.ephemeral: false
+    restart: unless-stopped
+
+volumes:
+  data:
+```
+
+![Portainer TSDProxy Stack](./assets/portainer_tsdproxy.png)
+
+![TSDProxy Container](./assets/tsdproxy_container.png)
+
+![TSDProxy Application](./assets/tsdproxy_app.png)
+
+![Tailscale Reauthentication Disabled](./assets/tailscale_reauthentication_disabled.png)
+
+### Configuring File Browser for Use with TDSProxy
+
+- Edit the existing File Browser stack in Portainer.
+  - Open Portainer and go to `Stacks`.
+  - Select the `filebrowser` stack.
+  - Open the stack editor.
+- Add TSDProxy labels under the File Browser service.
+  - The `labels` block must be nested under `services.filebrowser`.
+  - Its exact position inside the service does not matter, but placing it near `environment` and `restart` keeps the file easy to scan.
+  - `tsdproxy.enable: true` tells TSDProxy to publish File Browser through a Tailscale name.
+  - `tsdproxy.ephemeral: false` keeps the Tailscale machine persistent.
+- Redeploy the stack after editing.
+  - Click `Update the Stack`.
+  - Confirm the update if Portainer asks.
+  - Wait for Portainer to report that the stack deployed successfully.
+- Authenticate File Browser as a Tailscale service.
+  - Return to the TSDProxy dashboard and refresh it.
+  - Open the new File Browser entry.
+  - Log in to Tailscale and approve the device or service connection.
+  - Confirm that File Browser appears in the Tailscale machines list.
+- Disable key expiry for long-running File Browser access when appropriate.
+  - Open the File Browser machine menu in the Tailscale dashboard.
+  - Choose `Disable Key Expiry`.
+  - This avoids later access failures caused by expired Tailscale keys.
+- Access File Browser by its Tailscale service name.
+  - The first request may take extra time while TSDProxy joins Tailscale, provisions certificates, and starts the proxy.
+  - Wait briefly and reload if the first attempt fails.
+  - After the first successful load, use the service name instead of the Docker host IP address and port.
+- Repeat the same TSDProxy pattern for other self-hosted services.
+  - Add the TSDProxy labels to the service's Compose definition.
+  - Redeploy or update the stack.
+  - Refresh the TSDProxy dashboard.
+  - Authenticate the new Tailscale machine or service if prompted.
+  - Disable key expiry when the service should remain available long term.
+  - Use the generated Tailscale HTTPS name instead of the Docker host IP address and port.
+  - Add explicit labels such as `tsdproxy.name` or port labels when a service name or port is ambiguous.
+
+```yaml
+services:
+  filebrowser:
+    labels:
+      tsdproxy.enable: true
+      tsdproxy.ephemeral: false
+```
+
+![TSDProxy Compose Labels](./assets/tdsproxy_compose_labels.png)
+
+![TSDProxy File Browser](./assets/tsdproxy_filebrowser.png)
+
+### Configuring Portainer for User with TDSProxy
+
+- Configure Portainer with the same TSDProxy pattern used for File Browser.
+  - Open Portainer and go to `Stacks`.
+  - Select the `portainer` stack.
+  - Open the stack editor.
+  - Add the TSDProxy labels under `services.portainer`.
+- Keep the labels attached to the Portainer service.
+  - The `labels` block must be nested inside the `portainer` service definition.
+  - `tsdproxy.enable: true` tells TSDProxy to publish Portainer through a Tailscale name.
+  - `tsdproxy.ephemeral: false` keeps the Tailscale machine persistent.
+  - Add an explicit `tsdproxy.name` or port label only if automatic naming or port detection is not suitable.
+- Redeploy Portainer after editing the Compose file.
+  - Click `Update the Stack`.
+  - Confirm the update if Portainer asks.
+  - Wait for Portainer to report that the stack deployed successfully.
+  - Expect a brief interruption because Portainer is redeploying the service you are currently using.
+- Authenticate the new Portainer Tailscale service.
+  - Refresh the TSDProxy dashboard.
+  - Open the Portainer entry when it appears.
+  - Log in to Tailscale and approve the new service connection.
+  - Confirm that Portainer appears in the Tailscale machines list.
+- Disable key expiry for stable Portainer access when appropriate.
+  - Open the Portainer machine menu in the Tailscale dashboard.
+  - Choose `Disable Key Expiry`.
+  - This prevents future access failures caused by expired Tailscale keys.
+- Use the Tailscale HTTPS name for daily Portainer access.
+  - The expected service URL is `https://portainer.<tailnet-name>.ts.net`.
+  - The first request can take extra time while TSDProxy joins Tailscale, provisions certificates, and starts the proxy.
+  - After the service works by name, prefer the HTTPS Tailscale URL over direct `IP:port` access.
+
+```yaml
+services:
+  portainer:
+    labels:
+      tsdproxy.enable: true
+      tsdproxy.ephemeral: false
+```
+
+![TSDProxy Portainer](./assets/tsdproxy_portainer.png)
+
+### Finding Open Ports on your Docker Host
+
+- Check host port availability before publishing another service.
+  - Each user-facing service needs a unique host port.
+  - Existing examples use host ports such as `9000` for Portainer, `8080` for File Browser, and `8081` for TSDProxy.
+  - More services make it harder to remember which host ports are already taken.
+  - Valid TCP (Transmission Control Protocol) and UDP (User Datagram Protocol) port numbers must be `65535` or lower.
+- Use `ss` for the manual command-line method.
+  - `ss` means socket statistics.
+  - `-n` shows numeric addresses and ports instead of resolving names.
+  - `-t` includes TCP sockets.
+  - `-u` includes UDP sockets.
+  - `-l` limits output to listening sockets.
+  - The `Local Address:Port` column shows the host port in use after the final colon.
+- Extract just the listening port numbers when the full `ss` table is too noisy.
+  - The pipeline below reads listening TCP and UDP sockets.
+  - `awk` prints the local address and port column.
+  - The Perl-compatible regular expression extracts the final numeric port.
+  - `sort -n -u` sorts the list numerically and removes duplicates.
+- Choose a host port that is unused and easy to reason about.
+  - Matching host and container ports is convenient when the host port is free.
+  - If `8080` is already used, choose a nearby available port such as `8081` or `8082`.
+  - Do not create invalid ports by appending digits, such as turning `8080` into `80800`.
+- We can use Open Port Finder if we prefer a browser-based helper; I think it's overkill for most users.
+  - Deploy it as a Portainer stack or with Docker Compose.
+  - The course image is `jasonc/open-port-finder:latest`.
+  - The container name is `ports`, which gives TSDProxy a short service name to register.
+  - `network_mode: host` lets the container inspect the host network directly.
+  - `tsdproxy.container_port: "56789"` tells TSDProxy which app port to proxy because host networking makes automatic detection harder.
+- Publish Open Port Finder through TSDProxy.
+  - Deploy the stack from Portainer's `Stacks` view.
+  - Open the TSDProxy dashboard and authenticate the `ports` service with Tailscale.
+  - Disable key expiry for the `ports` service if it should remain available long term.
+  - Access it with a name such as `https://ports.<tailnet-name>.ts.net`.
+  - Enter a desired port and use the app's result in the next service's Compose file.
+
+```bash
+# Show listening TCP and UDP sockets with numeric addresses and ports.
+ss -ntul
+
+# Print only the local port numbers being used, then sort and deduplicate them.
+ss -ntul | awk '{print $5}' | grep -oE '[0-9]+$' | sort -n -u
+```
+
+[`open-port-finder/compose.yaml`](./lab/self-hosted-course/docker-stacks/open-port-finder/compose.yaml):
+
+```yaml
+services:
+  open-port-finder:
+    image: jasonc/open-port-finder:latest
+    container_name: ports
+    network_mode: host
+    labels:
+      tsdproxy.enable: true
+      tsdproxy.ephemeral: false
+      tsdproxy.container_port: "56789"
+    restart: unless-stopped
+```
+
 ## 8. Building a Centralized Dashboard
+
+### Introduction to Setting Up HomePage as Self-Hosted Dashboard
+
+### Deploying HomePage with Portainer
+
+### HomePage Overview and Features
+
+### Customizing HomePage
+
+### Installing IT-Tools: Convert `docker run` to `docker compose`
 
 ## 9. Publishing Services on Your Own Domain
 
+### Introduction to Accessing Self-Hosted Services Using your Own Domain with Caddy
+
+### Setting Up a Domain and DNS for Self-Hosted Services with Cloudflare
+
+### Configuring Cloudflare DNS and Deploying Caddy as Reverse Proxy
+
+### Making Your Self-Hosted Services Public with Cloudflare Tunnels
+
 ## 10. Discovering & Deploying Additional Self-Hosted Services and Applications
+
+### Intro to Finding, Evaluating, and Deploying Self-Hosted Services and Solutions
+
+### Finding Self-Hosted Solutions: Directories, Search Engines, and Communities
+
+### How to Evaluate Self-Hosted Applications
+
+### Deploying Self-Hosted Applications Using Docker, Docker Compose, or Portainer
