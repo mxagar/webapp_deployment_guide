@@ -1278,11 +1278,300 @@ services:
 
 ### Introduction to Setting Up HomePage as Self-Hosted Dashboard
 
+- Use Homepage as a central launchpad for self-hosted services.
+  - It collects service links in one customizable dashboard.
+  - It reduces the need to remember many separate URLs.
+  - It makes occasional services easier to rediscover when you do not use them every day.
+- Add a dashboard when the number of services starts to grow.
+  - A few service URLs are easy to remember.
+  - Many service URLs become cumbersome to track manually.
+  - Homepage gives you one place to scan, open, and organize those services.
+- Use Homepage to make shared access simpler.
+  - Family members or other trusted users can start from the dashboard.
+  - They do not need to know every individual service name or address.
+  - You can present only the services they should use.
+- Keep the deployment details for the next lesson.
+  - The course deploys Homepage as another self-hosted Docker service.
+  - Homepage is configured with YAML files for settings, services, bookmarks, and widgets.
+  - The dashboard can later point to services exposed through TSDProxy names.
+
 ### Deploying HomePage with Portainer
+
+- Deploy Homepage as another Portainer stack.
+  - Open Portainer through its TSDProxy URL.
+  - Select the `local` environment.
+  - Go to `Stacks` and choose `Add Stack`.
+  - Name the stack `homepage`.
+  - Paste or upload the lesson's `compose.yaml`.
+- Understand the Homepage image name.
+  - `ghcr.io/gethomepage/homepage:latest` comes from GitHub Container Registry (GHCR).
+  - The full image format is registry, namespace, image, and tag.
+  - Docker Hub image names can omit the registry because Docker defaults to `docker.io`.
+  - Docker can still pull and run images from other registries when the registry is included.
+- Understand the container settings.
+  - `container_name: homepage` gives the service a predictable Docker name.
+  - `3000:3000` maps host port `3000` to the container's internal port `3000`.
+  - `/var/run/docker.sock:/var/run/docker.sock` lets Homepage read Docker container status.
+  - `/opt/docker/homepage/config:/app/config` stores editable Homepage configuration files on the host.
+  - `HOMEPAGE_ALLOWED_HOSTS: "*"` allows access by any reachable IP address or hostname in this course setup.
+- Connect Homepage to TSDProxy.
+  - `tsdproxy.enable: true` publishes Homepage through a Tailscale HTTPS name.
+  - `tsdproxy.ephemeral: false` keeps the Tailscale machine persistent.
+  - `restart: unless-stopped` restarts Homepage after a reboot or crash unless you stop it manually.
+- Finish the Tailscale service setup after deployment.
+  - Click `Deploy the Stack`.
+  - Open the TSDProxy dashboard.
+  - Select the `homepage` entry and authenticate it with Tailscale.
+  - Disable key expiry for the Homepage machine if it should remain available long term.
+  - Access Homepage at `https://homepage.<tailnet-name>.ts.net`.
+  - Reload after a short wait if the first request fails while TSDProxy provisions the service.
+
+
+Links:
+
+- [Homepage GitHub Repository](https://github.com/gethomepage/homepage)
+- [Homepage Official Page](https://gethomepage.github.io/homepage/)
+
+Deployment compose file: [`homepage/compose.yaml`](./lab/self-hosted-course/docker-stacks/homepage/compose.yaml):
+
+- The linked Compose file defines the Homepage container, its config bind mount, Docker socket access, TSDProxy labels, and restart policy.
+
+```yaml
+services:
+  homepage:
+    image: ghcr.io/gethomepage/homepage:latest
+    container_name: homepage
+    ports:
+      - 3000:3000
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/docker/homepage/config:/app/config
+    environment:
+      HOMEPAGE_ALLOWED_HOSTS: "*"
+    labels:
+      tsdproxy.enable: true
+      tsdproxy.ephemeral: false
+    restart: unless-stopped
+```
+
+![Homepage Screenshot](./assets/homepage.png)
 
 ### HomePage Overview and Features
 
+- Start with Homepage's default dashboard layout.
+  - The default page includes sample groups, links, services, icons, widgets, and theme controls.
+  - Almost every visible part can be customized later.
+  - The default layout is useful as a reference before replacing the sample content.
+- Use information widgets at the top of the dashboard.
+  - The resources widget can show central processing unit (CPU), random access memory (RAM), and disk usage.
+  - Homepage can be expanded with other statistics such as temperature or uptime.
+  - The search widget is configured for DuckDuckGo in the course files.
+  - The datetime widget can show the current time in a compact format.
+- Organize self-hosted applications in the services section.
+  - The default dashboard shows placeholder groups such as `First Group`, `Second Group`, and `Third Group`.
+  - Real service groups should replace the sample data.
+  - Service entries can link to TSDProxy URLs and can optionally show Docker container status or integrations.
+- Use bookmarks for related non-service links.
+  - The course bookmark examples include Tailscale, Homepage documentation, icon resources, and Linux Training Academy.
+  - Bookmarks are useful for admin consoles, documentation, and reference sites.
+  - They keep supporting links near the services they help maintain.
+- Use the footer controls for quick dashboard adjustments.
+  - Color palette controls change the dashboard appearance.
+  - The refresh/reload control forces Homepage to reread its configuration.
+  - The theme toggle switches between dark mode and light mode.
+
 ### Customizing HomePage
+
+- Customize Homepage by editing YAML files in `/opt/docker/homepage/config`.
+  - Edit the files directly on the Docker host or through File Browser.
+  - In File Browser, browse to `/opt/docker/homepage/config`.
+  - The main files are `settings.yaml`, `widgets.yaml`, `services.yaml`, and `bookmarks.yaml`.
+  - Homepage usually detects saved changes, but the dashboard refresh button can force it to reread configuration.
+- Match each configuration file to the dashboard area it controls.
+  - `settings.yaml` controls global appearance and page behavior.
+  - `widgets.yaml` controls the top information widgets.
+  - `services.yaml` controls service groups, links, status checks, Docker status, and integrations.
+  - `bookmarks.yaml` controls static reference links near the bottom of the dashboard.
+  - Homepage documentation lists additional settings and supported widgets.
+- Use `settings.yaml` for global appearance.
+  - `title` changes the browser tab and dashboard title.
+  - `background.image` sets the dashboard background image.
+  - `background.brightness`, `opacity`, `blur`, and `saturate` adjust how visually strong the image appears.
+  - `theme` and `color` can lock the dashboard to a preferred appearance.
+  - `hideVersion: true` removes the Homepage version text from the footer.
+- Use `widgets.yaml` for the top information area.
+  - The resources widget can show central processing unit (CPU), memory, and disk usage.
+  - The search widget can use DuckDuckGo or another supported provider.
+  - The datetime widget adds a compact time display.
+  - Additional widgets such as weather or stocks can be added from the Homepage documentation.
+- Use `services.yaml` for live service entries.
+  - Replace the default sample groups with a real group such as `Infrastructure`.
+  - Add links to services such as Portainer, File Browser, TSDProxy, Open Port Finder, and IT-Tools.
+  - Use your own tailnet name in every `YOUR-TAILNET-NAME.ts.net` placeholder.
+  - Add icons from Dashboard Icons, Material Design Icons, Simple Icons, or selfh.st icons.
+  - Add `siteMonitor` to show service response status.
+  - Add `container` when Homepage should show Docker container status through the mounted Docker socket.
+  - Add supported service widgets when you want live data, such as Portainer container counts.
+- Create a Portainer widget only after generating the required Portainer details.
+  - Find the Portainer environment number from the Portainer URL after opening the local environment.
+  - Create a Portainer access token from the admin account settings.
+  - Use the environment number as `env` and the token as `key`.
+  - Treat the token as a secret and avoid committing a real value to public notes.
+- Use `bookmarks.yaml` for static reference links.
+  - Bookmarks are simple shortcuts, while services can include status checks and integrations.
+  - Add admin consoles, documentation, icon sources, and course resources that support your self-hosting workflow.
+
+![Homepage Services](./assets/homepage_services.png)
+
+Links:
+
+- [Homepage GitHub Repository](https://github.com/gethomepage/homepage)
+- [Homepage Official Page](https://gethomepage.dev/)
+
+Configuration files: [Homepage Configuration Files](./lab/self-hosted-course/configuration-files/homepage/).
+
+
+[`settings.yaml`](./lab/self-hosted-course/configuration-files/homepage/settings.yaml):
+
+- Defines global Homepage settings such as title, background image, theme, color palette, provider placeholders, and version visibility.
+- Use this file to make the dashboard visually stable and less cluttered.
+
+```yaml
+---
+# For configuration options and examples, please see:
+# https://gethomepage.dev/configs/settings/
+
+providers:
+  openweathermap: openweathermapapikey
+  weatherapi: weatherapiapikey
+
+title: Launchpad
+background:
+  image: https://images.unsplash.com/photo-1628771791803-7ee290de9893?w=3840&h=2160&fit=crop&auto=format&q=80
+  brightness: 50 # 0, 25, 50, 75, 125, 150, etc.
+  opacity: 50 # 25, 50, 75
+  #blur: sm # xs, sm, md, lg, xl, 2xl, 3xl
+  #saturate: 50 # 0, 25, 50, 75
+
+theme: dark
+color: slate
+
+hideVersion: true
+```
+
+[`widgets.yaml`](./lab/self-hosted-course/configuration-files/homepage/widgets.yaml):
+
+- Defines top-level information widgets for system resources, search, and date/time.
+- The course example shows CPU, memory, root disk usage, DuckDuckGo search, and short-format time.
+
+```yaml
+---
+# For configuration options and examples, please see:
+# https://gethomepage.dev/configs/info-widgets/
+
+- resources:
+    cpu: true
+    memory: true
+    disk: /
+
+- search:
+    provider: duckduckgo
+    target: _blank
+
+- datetime:
+    format:
+      timeStyle: short
+```
+
+[`services.yaml`](./lab/self-hosted-course/configuration-files/homepage/services.yaml):
+
+- Defines the `Infrastructure` service group shown on the dashboard.
+- Each service entry points to a TSDProxy HTTPS URL and can include an icon, site monitor, Docker container name, and optional widget.
+- Replace `YOUR-TAILNET-NAME` and `ptr_YOUR_PORTAINER_API_KEY` with local values before using it.
+
+```yaml
+---
+# For configuration options and examples, please see:
+# https://gethomepage.dev/configs/services/
+
+- Infrastructure:
+    - Portainer:
+        href: https://portainer.YOUR-TAILNET-NAME.ts.net
+        icon: portainer
+        siteMonitor: https://portainer.YOUR-TAILNET-NAME.ts.net
+        container: portainer
+        widget:
+          type: portainer
+          url: https://portainer.YOUR-TAILNET-NAME.ts.net
+          env: 3
+          key: ptr_YOUR_PORTAINER_API_KEY
+    - File Browser:
+        href: https://filebrowser.YOUR-TAILNET-NAME.ts.net
+        icon: filebrowser
+        siteMonitor: https://filebrowser.YOUR-TAILNET-NAME.ts.net
+        container: filebrowser
+    - TSDProxy:
+        href: https://tsdproxy.YOUR-TAILNET-NAME.ts.net
+        icon: tailscale-light
+        siteMonitor: https://tsdproxy.YOUR-TAILNET-NAME.ts.net
+        container: tsdproxy
+    - Open Port Finder:
+        href: https://ports.YOUR-TAILNET-NAME.ts.net
+        icon: port-note
+        siteMonitor: https://tsdproxy.YOUR-TAILNET-NAME.ts.net
+        container: ports
+    - IT-Tools:
+        href: https://it-tools.YOUR-TAILNET-NAME.ts.net
+        icon: it-tools
+        siteMonitor: https://it-tools.YOUR-TAILNET-NAME.ts.net
+        container: it-tools
+```
+
+[`bookmarks.yaml`](./lab/self-hosted-course/configuration-files/homepage/bookmarks.yaml):
+
+- Defines static bookmark groups for network management, documentation, icon sources, and education links.
+- Use this file for reference links that do not need live status or service widgets.
+
+```yaml
+---
+# For configuration options and examples, please see:
+# https://gethomepage.dev/configs/bookmarks
+
+- Network Management:
+    - Tailscale:
+        - icon: tailscale-light
+          href: https://tailscale.com/
+          description: ""
+
+- Documentation & Icons:
+    - Homepage:
+        - icon: homepage
+          href: https://gethomepage.dev/
+          description: ""
+    - Dashboard Icons:
+        - href: https://github.com/homarr-labs/dashboard-icons/
+          icon: homarr
+          description: ""
+    - Material Design Icons:
+        - href: https://pictogrammers.com/library/mdi/
+          icon: mdi-material-design-#757575
+          description: ""
+    - Simple Icons:
+        - href: https://simpleicons.org/
+          icon: mdi-image-#CCCCCC
+          description: ""
+    - Selfh.st Icons:
+        - href: https://selfh.st/icons/
+          icon: sh-selfh-st
+          description: ""
+
+- Education:
+    - Linux Training Academy:
+        - icon: linux
+          href: https://linuxtrainingacademy.com/
+          description: ""
+
+```
 
 ### Installing IT-Tools: Convert `docker run` to `docker compose`
 
