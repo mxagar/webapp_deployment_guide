@@ -22,6 +22,7 @@ Table of Contents:
       - [MacOS](#macos)
       - [iOS](#ios)
       - [Linux](#linux)
+    - [Using Tailscale](#using-tailscale)
   - [6. Docker and Portainer Setup](#6-docker-and-portainer-setup)
     - [Installing Docker on Ubuntu](#installing-docker-on-ubuntu)
     - [Introduction to Portainer](#introduction-to-portainer)
@@ -398,6 +399,10 @@ sudo tailscale up
 #### Linux
 
 TBD.
+
+### Using Tailscale
+
+
 
 ## 6. Docker and Portainer Setup
 
