@@ -1985,13 +1985,163 @@ services:
       TUNNEL_TOKEN: REPLACE_WITH_YOUR_TOKEN
 ```
 
-
 ## 10. Discovering & Deploying Additional Self-Hosted Services and Applications
 
 ### Intro to Finding, Evaluating, and Deploying Self-Hosted Services and Solutions
 
+- This lesson teaches a repeatable process for choosing and deploying self-hosted services.
+  - Find alternatives to expensive, third-party, or closed services you already use.
+  - Evaluate those alternatives against your own requirements.
+  - Deploy the selected service using the Docker and Portainer skills developed earlier in the course.
+- Self-hosting gives you more control over important services.
+  - You can reduce reliance on companies that may change pricing, remove features, or shut down products.
+  - You can choose open-source or self-hosted tools that better fit your privacy, cost, and flexibility goals.
+- Self-hosted services can replace common hosted products.
+  - File storage and sharing tools such as Dropbox or Google Drive can be replaced by options like Nextcloud or Seafile.
+  - Team messaging tools such as Slack can be replaced by options like Mattermost or Rocket.Chat.
+- The main goal is confidence, not memorizing one specific app.
+  - Tool lists change over time.
+  - Websites, projects, names, and installation steps may look different later.
+  - The lasting skill is learning how to research, judge, and deploy services on your own.
+
+Links:
+
+- [Best Self-Hosted Software & Open Source Web Apps](https://www.linuxtrainingacademy.com/best-self-hosted-software-open-source-web-apps/)
+- [awesome-selfhosted](https://github.com/jasonc/awesome-selfhosted)
+- [Self-Hosted Apps and Alternatives](https://selfh.st/apps/)
+- [Awesome Self Hosted](https://selfhosted.libhunt.com/)
+- [A curated list of self-hosted software & services](https://selfhostedworld.com/)
+- [Open Source Alternatives to Popular Software](https://openalternative.co/)
+
 ### Finding Self-Hosted Solutions: Directories, Search Engines, and Communities
+
+- Start with self-hosted directories and curated lists.
+  - They collect many projects in one place and make browsing easier than searching the whole web first.
+  - Awesome Self Hosted is a common starting point for discovering popular open-source and self-hosted services.
+  - Other directories may overlap, but each one can surface tools the others miss.
+- Search directories by product name when you want to replace a specific tool.
+  - Use your browser's in-page search with `Ctrl+F` on Windows or Linux.
+  - Use `Command+F` on macOS.
+  - Searching for `Trello` can reveal direct alternatives such as Focalboard, Planka, and Wekan.
+- Search by category when product-name searches are too narrow.
+  - Some good alternatives may not mention the commercial tool they replace.
+  - Trello-like tools are often grouped under task management, to-do lists, or Kanban boards.
+  - Category browsing can reveal more options, such as Kanboard, Nullboard, Restyaboard, Tracks, AppFlowy, Tasks, or Plane.
+- Check more than one directory.
+  - Self-hosted directories often have different tags, descriptions, and project coverage.
+  - Useful places to search include Selfh.st, selfhosted.libhunt.com, selfhostedworld.com, and OpenAlternative.
+  - Use tags, alternatives, and keyword search to move from a broad need to a short list of candidates.
+- Use regular search engines when directories are not enough.
+  - Search engines can find project pages, documentation, blog posts, forum threads, and comparison articles.
+  - Combine the name of an existing product with discovery terms such as `self-hosted`, `open source`, `alternative`, `clone`, or `replacement`.
+  - If you do not have a specific product in mind, search for the category or function instead.
+- Search community discussions for real-world feedback.
+  - Communities often mention tools that do not appear in curated directories.
+  - Reddit communities such as `/r/selfhosted`, `/r/homelab`, and `/r/HomeServer` can contain practical recommendations and warnings.
+  - Search existing posts before creating a new one.
+  - Replies can be especially useful because people compare tools from actual use.
+- Use artificial intelligence (AI) assistants as discovery helpers.
+  - Ask for a list of tools that match a product, category, or feature set.
+  - Treat the result as a starting point, not as final proof that a project is active or suitable.
+  - Verify project status, documentation, licensing, and deployment requirements before choosing a tool.
 
 ### How to Evaluate Self-Hosted Applications
 
+- Evaluate functionality first.
+  - The application must solve the problem you actually have.
+  - Compare its features against your must-have requirements before spending time deploying it.
+  - For a Trello replacement, a Kanban board with columns and movable cards may be a required feature.
+- Prefer applications that are easy to run with Docker.
+  - A good candidate has an official Docker image or a well-maintained community image.
+  - Clear Compose examples make deployment easier to repeat and troubleshoot.
+  - Look for documented environment variables, volumes, ports, and network requirements.
+- Check whether the project is actively maintained.
+  - Find the project's source code by searching for the application name plus `GitHub` or `source code`.
+  - Review recent commits, releases, and changes.
+  - A project with recent activity is usually a safer choice than one that has been inactive for years.
+- Use repository activity as a health signal.
+  - Contributors show how many people have added code to the project.
+  - Forks show that other developers have copied the project to study, modify, or contribute to it.
+  - Stars show that users have bookmarked or endorsed the project, but they should not be the only signal you trust.
+- Review issues and support channels.
+  - Open issues are normal on active projects.
+  - Closed issues can show that maintainers fix bugs, answer questions, and accept improvements.
+  - Discussion forums, chat rooms, or community links make it easier to get help later.
+- Be cautious with projects that show weak maintenance signals.
+  - One contributor, very few stars, no forks, and no recent commits can indicate higher risk.
+  - A small project can still be useful, but you should expect more responsibility for troubleshooting and maintenance.
+- Treat documentation quality as part of the evaluation.
+  - Good documentation helps you install, configure, update, and troubleshoot the service.
+  - Useful docs explain installation steps, common settings, dependencies, architecture, and recovery tips.
+  - Poor or missing docs can make a service harder to maintain, update, or scale.
+
+
 ### Deploying Self-Hosted Applications Using Docker, Docker Compose, or Portainer
+
+- Start from the application's official documentation.
+  - Look for installation instructions in the project website, repository, or linked documentation site.
+  - Search specifically for Docker or Docker Compose instructions.
+  - Many projects provide a Compose file that can be used as a starting point.
+- Check the source repository when the docs are incomplete.
+  - Look for files named `compose.yaml`, `docker-compose.yml`, or `docker-compose.yaml`.
+  - Look for a `Dockerfile` if no Compose file is provided.
+  - A `Dockerfile` can indicate that the project supports containerized deployment.
+- Check Docker Hub when you find an image but no Compose file.
+  - Search for the application name on Docker Hub.
+  - Read the image page for required environment variables, volume paths, exposed ports, and usage examples.
+  - Official images may use a short image name such as `ghost`, while other images usually include a user or organization name.
+- Convert `docker run` examples when needed.
+  - Some projects provide only a `docker run` command.
+  - Convert that command into a Compose file with IT-Tools or an artificial intelligence (AI) assistant.
+  - Review the generated Compose file before deploying it.
+- Search the web for Compose examples if the official sources do not provide one.
+  - Combine the application name with terms such as `docker compose`, `docker compose file`, `compose.yaml`, or `docker-compose.yml`.
+  - Community examples can help, but they may be outdated or tailored to a different setup.
+  - Portainer Community Templates can also provide useful starting examples.
+- Customize any Compose file before deploying it.
+  - Change host ports so they do not conflict with ports already in use on your Docker host.
+  - Translate bind mount paths into the directory layout used in this course, such as `/opt/docker/<app-name>/`.
+  - Set required environment variables before starting the service.
+  - Review volumes so application data is stored persistently.
+- Understand the main Compose settings before using them.
+  - `services` defines the containers that belong to the application.
+  - `image` tells Docker which container image to run.
+  - `ports` maps a port on the Docker host to a port inside the container.
+  - `environment` passes configuration values into the container.
+  - `volumes` preserve data or mount host files and directories into the container.
+- Decide how the service should be accessed after deployment.
+  - For private tailnet access, add the required TSDProxy labels to the Compose file and let TSDProxy publish it through Tailscale.
+  - For private custom-domain access, add a matching Caddy hostname and `reverse_proxy` target for the service's host port.
+  - For public internet access, add a Cloudflare Tunnel public hostname that points to the service's local URL.
+- Deploy through Portainer when you want the browser-based workflow.
+  - Create a new stack.
+  - Paste the final Compose YAML.
+  - Deploy the stack and check that the containers start successfully.
+  - Open the service through the access method you configured.
+
+```text
+# Useful search patterns for finding deployment examples.
+<app-name> docker compose
+<app-name> docker compose file
+<app-name> compose.yaml
+<app-name> docker-compose.yml
+<app-name> Docker Hub
+```
+
+```yaml
+# Minimal Compose shape to adapt for a simple web application.
+services:
+  app:
+    image: example/app:latest
+    container_name: example-app
+    restart: unless-stopped
+    ports:
+      # Map an available host port to the port the app listens on in the container.
+      - 8080:80
+    environment:
+      # Replace example settings with values required by the image documentation.
+      APP_SETTING: value
+    volumes:
+      # Store persistent app data under the course's /opt/docker layout.
+      - /opt/docker/example-app/config:/config
+```
