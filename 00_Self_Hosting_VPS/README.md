@@ -1575,15 +1575,621 @@ hideVersion: true
 
 ### Installing IT-Tools: Convert `docker run` to `docker compose`
 
+- Deploy IT-Tools as a utility collection for common information technology (IT) tasks.
+  - It includes tools for encoding, decoding, comparing text, and other admin-oriented workflows.
+  - This lesson focuses on the `docker run` to Docker Compose converter.
+  - The converter is useful when documentation provides only a `docker run` command but you want a reusable Compose stack.
+- Deploy IT-Tools from Portainer.
+  - Open Portainer through its TSDProxy URL.
+  - Select the `local` environment.
+  - Go to `Stacks` and choose `Add stack`.
+  - Name the stack `it-tools`.
+  - Paste or upload the lesson's Compose YAML.
+- Understand the IT-Tools Compose file.
+  - `corentinth/it-tools:latest` pulls the IT-Tools image from Docker Hub.
+  - `container_name: it-tools` gives the container a predictable name.
+  - `8082:80` maps host port `8082` to container port `80`.
+  - `tsdproxy.enable: true` exposes IT-Tools through a Tailscale HTTPS name.
+  - `tsdproxy.ephemeral: false` keeps the Tailscale machine persistent.
+  - `restart: unless-stopped` restarts the service after a reboot or crash unless you stop it manually.
+- Finish the TSDProxy setup after deployment.
+  - Click `Deploy the stack`.
+  - Open the TSDProxy dashboard.
+  - Select the IT-Tools entry and authenticate it with Tailscale.
+  - Disable key expiry for the IT-Tools machine if it should remain available long term.
+  - Access IT-Tools at `https://it-tools.<tailnet-name>.ts.net`.
+- Use the Docker conversion tool when deploying services from examples.
+  - Search for `Docker` inside IT-Tools.
+  - Open the `docker run` to Docker Compose converter.
+  - Paste a `docker run` command into the converter.
+  - Use the generated Compose YAML as a starting point for a Portainer stack or a terminal-based `docker compose` deployment.
+- Add IT-Tools to Homepage for easier access.
+  - Edit `/opt/docker/homepage/config/services.yaml`.
+  - Add an `IT-Tools` service entry that points to your TSDProxy URL.
+  - Replace the tailnet placeholder with your own tailnet name.
+  - Refresh Homepage and confirm that the IT-Tools link appears.
+
+![IT Tools Dashboard](./assets/it_tools_dashboard.png)
+
+[`it-tools/compose.yaml`](./lab/self-hosted-course/docker-stacks/it-tools/compose.yaml):
+
+- The linked Compose file defines the IT-Tools container, host port mapping, TSDProxy labels, and restart policy.
+
+```yaml
+services:
+  it-tools:
+    image: 'corentinth/it-tools:latest'
+    container_name: it-tools
+    ports:
+      - '8082:80'
+    labels:
+      tsdproxy.enable: true
+      tsdproxy.ephemeral: false
+    restart: unless-stopped
+```
+
 ## 9. Publishing Services on Your Own Domain
 
 ### Introduction to Accessing Self-Hosted Services Using your Own Domain with Caddy
 
+- This lesson shows how to access self-hosted services through a domain you own.
+  - It is useful if you already own a domain or plan to register one.
+  - You can skip this path if you only want to use Tailscale names for private access.
+- Earlier access methods were functional but less polished.
+  - IP addresses and port numbers work, but they are hard to remember.
+  - TSDProxy and Tailscale give services human-friendly names, but those names still depend on the Tailscale tailnet domain.
+  - A custom domain gives you control over service names such as `files.example.com` or `portainer.example.com`.
+- Caddy is the web server used for the custom-domain setup.
+  - Caddy can act as a reverse proxy.
+  - A reverse proxy receives browser traffic for a domain and forwards it to the correct service and port on your server.
+  - In a Caddyfile, this is usually expressed with the `reverse_proxy` directive.
+- Caddy can automatically obtain and renew Transport Layer Security (TLS) certificates.
+  - TLS certificates make browser access use valid HTTPS.
+  - Caddy uses Automated Certificate Management Environment (ACME) issuers such as Let's Encrypt.
+  - A Certificate Authority (CA) only issues a certificate after Caddy proves control of the domain.
+- The default HTTP-based ACME challenge does not fit a private tailnet-only server.
+  - The CA normally validates a domain by requesting a token from a public URL on that domain.
+  - If the service is only reachable inside your tailnet, the CA cannot reach that URL from the public internet.
+- DNS challenges solve the validation problem without exposing the service publicly.
+  - Instead of serving a token over HTTP, Caddy creates a special DNS record for the domain.
+  - Cloudflare will be used as the DNS provider so Caddy can manage the required challenge records.
+  - This lets Caddy issue valid HTTPS certificates while the services remain reachable only through your intended network path.
+
+
 ### Setting Up a Domain and DNS for Self-Hosted Services with Cloudflare
+
+- Start by registering a domain if you do not already own one.
+  - A domain registrar is the company that sells and manages domain registrations.
+  - Common registrars include Cloudflare, Namecheap, GoDaddy, IONOS, and Porkbun.
+  - Cloudflare is convenient for this course because Cloudflare will also provide Domain Name System (DNS) hosting, but buying the domain there is optional.
+- Choose a top-level domain (TLD) that fits your name and budget.
+  - Common TLDs include `.com`, `.net`, and `.org`.
+  - Many other TLDs exist, such as `.xyz`, `.biz`, and `.top`.
+  - Check the yearly renewal price, because a low first-year price can renew at a much higher rate.
+- Add the domain to Cloudflare after registration.
+  - Create or sign in to a Cloudflare account.
+  - Add the domain to Cloudflare and choose the free plan when prompted.
+  - Let Cloudflare scan and import existing DNS records, then review them before continuing.
+- If the domain was registered outside Cloudflare, update the domain's authoritative nameservers.
+  - Cloudflare provides the exact nameservers to use.
+  - Log in to the registrar dashboard and replace the current nameservers with the Cloudflare-assigned nameservers.
+  - Follow the registrar-specific instructions if the dashboard labels are different.
+  - Cloudflare activation can take up to 24 hours, although it often completes sooner.
+- Decide whether the whole domain should be used for private self-hosted services.
+  - This works when the domain is dedicated to the services on your Docker host.
+  - Example root service: `linuxtrainingacademy.com` opens the Homepage dashboard.
+  - Example subdomain service: `portainer.linuxtrainingacademy.com` opens Portainer.
+  - Create one DNS record for the root domain and point it to the Tailscale IP address of the Docker host.
+  - Create one wildcard DNS record, such as `*.linuxtrainingacademy.com`, and point it to the same Tailscale IP address.
+- Use a dedicated subdomain when the root domain already hosts public services.
+  - This avoids sending your public website, blog, store, or business site to the private Docker host.
+  - Example private namespace: `internal.linuxtrainingacademy.com`.
+  - Example service address: `portainer.internal.linuxtrainingacademy.com`.
+  - Create one DNS record for `internal.linuxtrainingacademy.com` and point it to the Docker host's Tailscale IP address.
+  - Create one wildcard DNS record, such as `*.internal.linuxtrainingacademy.com`, and point it to the same Tailscale IP address.
+- Wildcard DNS records reduce repeated setup work.
+  - The asterisk (`*`) matches subdomains that do not already have a more specific DNS record.
+  - New service names can resolve to the Docker host without adding a separate DNS record each time.
+  - Caddy will later decide which service receives the request based on the hostname.
+
+![Domains and Subdomains](./assets/domains_subdomains.png)
+
+![Domains and Subdomains](./assets/domains_subdomains_2.png)
+
 
 ### Configuring Cloudflare DNS and Deploying Caddy as Reverse Proxy
 
+- Configure Cloudflare DNS after choosing either a whole-domain or private-subdomain layout.
+  - Get the Tailscale IP address of the Linux Docker host.
+  - You can find it from the host command line or in the Tailscale dashboard.
+  - In Cloudflare, open the domain and go to the DNS records page.
+- Add the base DNS record for the private service namespace.
+  - Use an `A` record.
+  - For a dedicated private subdomain, set the name to something like `internal`.
+  - Set the IPv4 address to the Docker host's Tailscale IP address.
+  - Turn Cloudflare proxying off so the record is `DNS only`.
+- Add the wildcard DNS record for future service names.
+  - Use another `A` record.
+  - For a private namespace, set the name to something like `*.internal`.
+  - Point it to the same Tailscale IP address.
+  - Keep proxy status off so Cloudflare only resolves the name and does not proxy the traffic.
+- Test the DNS records from the Docker host.
+  - The `host` command performs a DNS lookup and shows the IP address a name resolves to.
+  - Test both the base namespace and wildcard names.
+  - A made-up wildcard hostname should still resolve to the Docker host's Tailscale IP address.
+
+```bash
+# Show the Tailscale IP address assigned to this Docker host.
+tailscale ip -4
+
+# Confirm the base private namespace resolves to the Docker host.
+# DNS changes often work quickly, but may take a few minutes to propagate.
+host internal.example.com
+
+# Confirm a real service hostname resolves through the wildcard record.
+# DNS changes often work quickly, but may take a few minutes to propagate.
+host portainer.internal.example.com
+
+# Confirm an arbitrary hostname also matches the wildcard record.
+# DNS changes often work quickly, but may take a few minutes to propagate.
+host anything.internal.example.com
+```
+
+![Cloudflare DNS New Record](./assets/cloudflare_new_record.png)
+
+![Cloudflare DNS Records](./assets/cloudflare_records.png)
+
+- Create a Cloudflare API token so Caddy can complete DNS challenges.
+  - Open the Cloudflare profile menu and go to API Tokens.
+  - Create a token from the `Edit zone DNS` template.
+  - Leave the persmisions as: `Zone`, `DNS`, `Edit`.
+  - Set Zone resources to `Include all zones`.
+    - The token needs DNS edit access for the zones Caddy will manage.
+  - Continue to summary and create the token.
+  - Copy the token immediately because Cloudflare only shows it once; this will be our `CLOUDFLARE_API_TOKEN` to authenticate from Caddy to Cloudflare.
+- Create the Caddy configuration file before deploying the stack (see below).
+  - In File Browser, create `/opt/docker/caddy`.
+  - Create a file named `Caddyfile` with a capital `C`.
+  - Paste in the lesson Caddyfile and replace `YOUR_DOMAIN` with your real domain.
+  - Create this file first, because Docker can create a missing bind-mounted file path as a directory.
+  - Caddy routes each hostname to the matching service port; it's a reverse proxy.
+    - `127.0.0.1` means localhost, or the same Linux Docker host.
+    - `reverse_proxy http://127.0.0.1:3000` forwards matching browser requests to port `3000` on the host.
+    - Add new services by copying the template, changing the hostname, and changing the host port.
+- Deploy Caddy as a Portainer stack (see compose file below).
+  - Open Portainer, select the local environment, and go to Stacks.
+  - Add a stack named `caddy`.
+  - Paste the lesson compose file and replace `YOUR_TOKEN_HERE` with the Cloudflare API token in `CLOUDFLARE_API_TOKEN`.
+  - Deploy the stack and confirm the container starts.
+  - Note: the example uses a public docker image from the instructor, but we could create our own following the Cloudflare documentation. The main difference in the image is that the instructor added the Cloudflare DNS module to the official Caddy image for Cloudflare integration.
+- Confirm the final access path from a browser.
+  - Visit the base private namespace, such as `internal.example.com`, to reach Homepage.
+  - Visit service hostnames, such as `portainer.internal.example.com`, to reach individual services.
+  - Access should work only from devices connected to the tailnet: `internal.example.com` and `*.internal.example.com` resolve to the Docker host's Tailscale IP address, so only devices connected to your tailnet can actually reach that IP.
+  - The non-`internal` will be accessible from anywhere.
+- As a result, we can access our VPS services using our domains of choice.
+
+![Cloudflare User API Tokens](./assets/cloudflare_user_api_tokens.png)
+
+Caddy configuration file: [`caddy/Caddyfile`](./lab/self-hosted-course/configuration-files/caddy/Caddyfile):
+
+- Defines Cloudflare as the DNS provider for Caddy's ACME certificate challenges.
+- Maps each private hostname to the local port used by the matching service.
+- Includes a copyable template for future services.
+
+```caddyfile
+{
+  # Use Cloudflare DNS challenges for Caddy-managed TLS certificates.
+  dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+}
+
+internal.YOUR_DOMAIN {
+  # Send the private namespace root to Homepage.
+  reverse_proxy http://127.0.0.1:3000
+}
+
+portainer.internal.YOUR_DOMAIN {
+  # Send Portainer traffic to its host port.
+  reverse_proxy http://127.0.0.1:9000
+}
+
+filebrowser.internal.YOUR_DOMAIN {
+  reverse_proxy http://127.0.0.1:8080
+}
+
+tsdproxy.internal.YOUR_DOMAIN {
+  reverse_proxy http://127.0.0.1:8081
+}
+
+ports.internal.YOUR_DOMAIN {
+  reverse_proxy http://127.0.0.1:56789
+}
+
+it-tools.internal.YOUR_DOMAIN {
+  reverse_proxy http://127.0.0.1:8082
+}
+
+# Template for adding additional services:
+# SERVICE_NAME.internal.YOUR_DOMAIN {
+#   reverse_proxy http://127.0.0.1:HOST_PORT
+# }
+```
+
+Caddy deployment file: [`caddy/compose.yaml`](./lab/self-hosted-course/docker-stacks/caddy/compose.yaml):
+
+- Runs one `caddy` service from a Caddy image that includes the Cloudflare DNS module.
+- Uses host networking so Caddy can listen on ports `80` and `443` and reach services on host ports.
+- Passes the Cloudflare API token through an environment variable.
+- Mounts the host Caddyfile into the container and stores Caddy data/config in named volumes.
+
+```yaml
+services:
+  caddy:
+    # This image includes the Cloudflare DNS module required for DNS challenges.
+    image: jasonc/caddy-cloudflare:2
+    container_name: caddy
+    # Let Caddy bind to host ports 80 and 443 and reach host-local services.
+    network_mode: host
+    environment:
+      # Replace this placeholder with the Cloudflare API token you created.
+      CLOUDFLARE_API_TOKEN: YOUR_TOKEN_HERE
+    volumes:
+      # Create this file on the host before deploying the stack.
+      - /opt/docker/caddy/Caddyfile:/etc/caddy/Caddyfile
+      # Store certificates and renewal data.
+      - data:/data
+      # Store Caddy's internal active configuration.
+      - config:/config
+    restart: unless-stopped
+
+volumes:
+  data:
+  config:
+```
+
+
 ### Making Your Self-Hosted Services Public with Cloudflare Tunnels
+
+Up to this point, we've focused on accessing your self-hosted services privately and securely by only
+
+allowing devices on your telnet to access them.
+
+That's great for internal use, but what if you want to share something publicly, like a blog, a portfolio,
+
+or other content that's meant for the world to see?
+
+Well, in this lesson, you'll learn how to make any of your self-hosted services accessible from the
+
+public internet.
+
+Using Cloudflare Tunnels as an example, we'll deploy a new service, the Ghost Blogging Platform,
+
+and expose it to the internet using your own domain name.
+
+We'll begin by deploying ghost using Docker and Portainer.
+
+If you're comfortable using the command line, you can use Docker Compose, but I'll demonstrate using
+
+Portainer so you can easily follow along.
+
+First, open up your web browser and navigate to your Portainer dashboard, which should be located
+
+at Portainer dot net.
+
+Net.
+
+Once there, log in.
+
+Now click on your local environment.
+
+Then go to stacks.
+
+Click Add Stack and name it ghost.
+
+Now paste in the contents of the compose YAML file attached to this lesson.
+
+You need to change the value of the URL environment variable to match the URL or address you intend
+
+to use for this blog.
+
+By the way, URL stands for Uniform Resource Locator and it's the technical term for web address like
+
+blog academy.com.
+
+It's a good practice to assign a dedicated domain to each publicly accessible service you host.
+
+While it's not required if the blog will represent your entire domain for testing and demonstration
+
+purposes, let's use the subdomain of blog.
+
+For example, since my domain name is Linux training academy.com, I'll set the URL environment variable
+
+to blog Linux training Academy.com.
+
+Now that we've got that out of the way.
+
+Let's go back and review the entire compose YAML file.
+
+Here we're deploying two services.
+
+The first is named ghost, and it will run the main application component of the ghost blogging platform
+
+in its container.
+
+The second service is named DB, and it creates a container that runs the database that ghost uses.
+
+This is where the contents of your blog posts will be stored.
+
+The image for the ghost service is Ghost Colon five.
+
+This format varies slightly from image names you've seen so far.
+
+Typically, image names start with a Docker Hub username or organization name.
+
+For example, we used Portainer forward slash Portainer c colon as the image name for the Portainer
+
+service.
+
+The user or organization name in that case is Portainer.
+
+The image name is Portainer and the tag is LTS.
+
+However, this image is what's known as an official Docker image.
+
+These official Docker images are maintained by Docker or trusted partners, and they live in the root
+
+namespace of Docker Hub.
+
+That means there's no need for a username or organization name in this case.
+
+Ghost is the official Docker image name and five is the version.
+
+Next, the container name is set to ghost.
+
+You can see that we set a restart policy of unless stopped, which ensures that the container will always
+
+restart automatically unless we explicitly stop it.
+
+From there, we are mapping the host port of 2368 to the internal container port of also 236, eight.
+
+The next section contains a set of environment variables that the ghost application will use to connect
+
+to the database.
+
+One important thing to note is the database connection host colon db line.
+
+Docker compose automatically creates a custom network for all services defined in the same compose file,
+
+and each service becomes discoverable by its service name as a hostname.
+
+That's why the hostname of db is used in the compose YAML file.
+
+We've already talked about how you need to set the value of the URL environment variable to match the
+
+address you intend to use.
+
+Ghosts will use the contents of this variable to create links.
+
+For example, we are using one volume of ghost and mapping that to the var lib ghost content directory
+
+inside the container.
+
+This volume will contain the data that is not stored in the database, such as themes, images, and
+
+application logs.
+
+For the DB service, we'll be using the official Docker image of MySQL with a version number of eight.
+
+This is the version of MySQL that is officially supported by the ghost web application.
+
+Next we set the container name to be ghost DB.
+
+You can see that we set a restart policy of unless stopped, which ensures that the container will always
+
+restart automatically unless you explicitly stop it.
+
+We are setting one environment variable, which is the MySQL root password, and using the same value.
+
+We told the ghost application to access this database with.
+
+If you want to use a different password, make sure to change it in both places in the compose YAML
+
+file.
+
+Next, we are mapping the volume of db to the var lib MySQL directory inside the container.
+
+This is where MySQL will store all of its data and files.
+
+Finally, the ghost and db volumes are declared in the volume section of the compose YAML file.
+
+Now that you understand the configuration, click deploy the stack.
+
+After doing so, you should see a message that tells you that the stack was successfully created.
+
+Now that we have our blog deployed, we need to make it publicly available.
+
+To do that, we'll use a Cloudflare Tunnel.
+
+A Cloudflare tunnel is a secure service that creates an encrypted connection between your local server
+
+or application and cloudflare's network.
+
+This allows you to expose local services to the internet without opening firewall ports or even having
+
+a public IP address.
+
+To do that, you'll install a client called Cloudflare D on your Linux Docker host that securely connects
+
+to Cloudflare's network.
+
+Then Cloudflare routes external traffic to your service over that secure connection, which is called
+
+a tunnel.
+
+This connection is initiated from inside your network so no open ports are needed.
+
+It's fast, encrypted, and safe.
+
+To use.
+
+Cloudflare tunnels.
+
+You must use Cloudflare for DNS for your domain and run Cloudflare D tunnel client on your Docker host.
+
+You've already configured your domain to use Cloudflare for DNS, so the next step is to deploy Cloudflare
+
+D tunnel client.
+
+Log into Cloudflare at Cloudflare.
+
+Click on Zero Trust to access the section of Cloudflare site where you can configure tunnels.
+
+From there, click on networks and then click on tunnels.
+
+Next click add a tunnel.
+
+From there, select Cloudflare D.
+
+Now give your tunnel a name.
+
+Let's name it Self-hosted Tunnel, because we plan to only use one tunnel that connects to our self-hosted
+
+environment.
+
+Now click on Save Tunnel.
+
+On the Choose your Environment screen, select Docker, click on the copy icon next to the docker run
+
+command.
+
+Now open up a text editor on your system and paste the contents of your clipboard into that document.
+
+On windows, you can use notepad, and on macOS you can use text edit.
+
+After Dash Dash token, you'll see a long string of seemingly random text.
+
+This is your tunnel token.
+
+You'll need your tunnel token in the next step, so be sure to save it.
+
+Please note if there are any quotation marks or an ending quotation mark, it is not part of your tunnel
+
+token.
+
+Now it's time to deploy the Cloudflare D tunnel client using Portainer.
+
+And Portainer go to Stax.
+
+Click Add Stack and name it Cloudflare D.
+
+Now paste in the contents of the compose YAML file attached to this lesson.
+
+Be sure to use your token where it says replace with your token.
+
+Again, this is a seemingly random and long string of text.
+
+Also, note that your token should not have any quotation marks in it.
+
+So if the last character of your token is a quotation mark, then just remove that character.
+
+Once you've set your token, click on deploy the stack.
+
+Now return to the Cloudflare tab in your web browser and look at the connectors section of the page.
+
+You should see that there is one connector with a status of connected.
+
+Now click on next.
+
+On the Add Public Hostname screen, enter blog as the subdomain name.
+
+Next, select your domain.
+
+Leave the path blank.
+
+Under the service section, select HTTP as the type for the URL.
+
+Enter
+
+0.0.12368.
+
+Remember that 127.0.0.1 is a special IP address that means localhost or this host.
+
+Since Cloudflare D is running on your Docker host, we want it to connect to that same host on port
+
+2368 where the ghost service is running.
+
+Now click Complete Setup.
+
+At this point, you should be able to access the ghost service over the public internet using the name
+
+blogger Yourdomain.
+
+So I'm going to visit blogger academy.com.
+
+And sure enough, I see the service.
+
+The administration path for ghost is forward slash ghost.
+
+So let me visit blogger academy.com.
+
+Here you can create an account, set the title of your blog and start adding blog posts.
+
+I'll let you explore ghost on your own if you're interested.
+
+The important point here is that you took a self-hosted service and made it publicly available using
+
+your own domain name.
+
+Now, anyone in the world can visit your blog.
+
+They don't have to be connected to your telnet to do so.
+
+I should give you a word of caution here.
+
+When you follow this process, you're exposing that service to the entire world.
+
+So never, ever put anything on the internet that doesn't absolutely need to be there.
+
+For example, I would never make Portainer publicly accessible because it provides administrative access
+
+to your entire Docker environment.
+
+If someone gained access to that, they could do all sorts of bad things.
+
+You should make it so that you have to be connected to your telnet in order to access portainer.
+
+And that's what we've done by default.
+
+With that warning out of the way, I'm sure you're going to want to make other services public.
+
+To do that, go back to the tunnel section in Cloudflare and add another public hostname.
+
+So click the menu next to your self-hosted tunnel and click configure.
+
+From there, click on public host names.
+
+Now click on add a public host name.
+
+Let's say you want to make your IT tool service available on the internet.
+
+First you would give it a subdomain name such as IT tools.
+
+Then you would select your domain.
+
+You would then set the service type to HTTP and the URL to 127.0.0.18082.
+
+Click save to make the service public.
+
+Now when you visit it your domain, you will see the IT tools dashboard.
+
+By the way, I'm going to delete these records so they won't be accessible in the future.
+
+I just did this as a demonstration, so don't expect to visit blog academy.com and see the ghost website.
+
+Well, that brings us to the end of this lesson where you learned how to make self-hosted services publicly
+
+accessible through a secure Cloudflare tunnel.
+
 
 ## 10. Discovering & Deploying Additional Self-Hosted Services and Applications
 

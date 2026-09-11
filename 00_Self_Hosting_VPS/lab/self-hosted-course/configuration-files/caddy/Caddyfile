@@ -1,5 +1,5 @@
 {
-  acme_dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+  dns cloudflare {env.CLOUDFLARE_API_TOKEN}
 }
 
 internal.YOUR_DOMAIN {
@@ -28,5 +28,5 @@ it-tools.internal.YOUR_DOMAIN {
 
 # Template for adding additional services:
 # SERVICE_NAME.internal.YOUR_DOMAIN {
-#   reverse_proxy http://127.0.0.1:HOST_PORT {
+#   reverse_proxy http://127.0.0.1:HOST_PORT
 # }
