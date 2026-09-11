@@ -1766,7 +1766,7 @@ host anything.internal.example.com
   - Visit the base private namespace, such as `internal.example.com`, to reach Homepage.
   - Visit service hostnames, such as `portainer.internal.example.com`, to reach individual services.
   - Access should work only from devices connected to the tailnet: `internal.example.com` and `*.internal.example.com` resolve to the Docker host's Tailscale IP address, so only devices connected to your tailnet can actually reach that IP.
-  - The non-`internal` will be accessible from anywhere.
+  - The non-`internal` will be accessible from anywhere, as explained in the next section!
 - As a result, we can access our VPS services using our domains of choice.
 
 ![Cloudflare User API Tokens](./assets/cloudflare_user_api_tokens.png)
@@ -1850,345 +1850,140 @@ volumes:
 
 ### Making Your Self-Hosted Services Public with Cloudflare Tunnels
 
-Up to this point, we've focused on accessing your self-hosted services privately and securely by only
-
-allowing devices on your telnet to access them.
-
-That's great for internal use, but what if you want to share something publicly, like a blog, a portfolio,
-
-or other content that's meant for the world to see?
-
-Well, in this lesson, you'll learn how to make any of your self-hosted services accessible from the
-
-public internet.
-
-Using Cloudflare Tunnels as an example, we'll deploy a new service, the Ghost Blogging Platform,
-
-and expose it to the internet using your own domain name.
-
-We'll begin by deploying ghost using Docker and Portainer.
-
-If you're comfortable using the command line, you can use Docker Compose, but I'll demonstrate using
-
-Portainer so you can easily follow along.
-
-First, open up your web browser and navigate to your Portainer dashboard, which should be located
-
-at Portainer dot net.
-
-Net.
-
-Once there, log in.
-
-Now click on your local environment.
-
-Then go to stacks.
-
-Click Add Stack and name it ghost.
-
-Now paste in the contents of the compose YAML file attached to this lesson.
-
-You need to change the value of the URL environment variable to match the URL or address you intend
-
-to use for this blog.
-
-By the way, URL stands for Uniform Resource Locator and it's the technical term for web address like
-
-blog academy.com.
-
-It's a good practice to assign a dedicated domain to each publicly accessible service you host.
-
-While it's not required if the blog will represent your entire domain for testing and demonstration
-
-purposes, let's use the subdomain of blog.
-
-For example, since my domain name is Linux training academy.com, I'll set the URL environment variable
-
-to blog Linux training Academy.com.
-
-Now that we've got that out of the way.
-
-Let's go back and review the entire compose YAML file.
-
-Here we're deploying two services.
-
-The first is named ghost, and it will run the main application component of the ghost blogging platform
-
-in its container.
-
-The second service is named DB, and it creates a container that runs the database that ghost uses.
-
-This is where the contents of your blog posts will be stored.
-
-The image for the ghost service is Ghost Colon five.
-
-This format varies slightly from image names you've seen so far.
-
-Typically, image names start with a Docker Hub username or organization name.
-
-For example, we used Portainer forward slash Portainer c colon as the image name for the Portainer
-
-service.
-
-The user or organization name in that case is Portainer.
-
-The image name is Portainer and the tag is LTS.
-
-However, this image is what's known as an official Docker image.
-
-These official Docker images are maintained by Docker or trusted partners, and they live in the root
-
-namespace of Docker Hub.
-
-That means there's no need for a username or organization name in this case.
-
-Ghost is the official Docker image name and five is the version.
-
-Next, the container name is set to ghost.
-
-You can see that we set a restart policy of unless stopped, which ensures that the container will always
-
-restart automatically unless we explicitly stop it.
-
-From there, we are mapping the host port of 2368 to the internal container port of also 236, eight.
-
-The next section contains a set of environment variables that the ghost application will use to connect
-
-to the database.
-
-One important thing to note is the database connection host colon db line.
-
-Docker compose automatically creates a custom network for all services defined in the same compose file,
-
-and each service becomes discoverable by its service name as a hostname.
-
-That's why the hostname of db is used in the compose YAML file.
-
-We've already talked about how you need to set the value of the URL environment variable to match the
-
-address you intend to use.
-
-Ghosts will use the contents of this variable to create links.
-
-For example, we are using one volume of ghost and mapping that to the var lib ghost content directory
-
-inside the container.
-
-This volume will contain the data that is not stored in the database, such as themes, images, and
-
-application logs.
-
-For the DB service, we'll be using the official Docker image of MySQL with a version number of eight.
-
-This is the version of MySQL that is officially supported by the ghost web application.
-
-Next we set the container name to be ghost DB.
-
-You can see that we set a restart policy of unless stopped, which ensures that the container will always
-
-restart automatically unless you explicitly stop it.
-
-We are setting one environment variable, which is the MySQL root password, and using the same value.
-
-We told the ghost application to access this database with.
-
-If you want to use a different password, make sure to change it in both places in the compose YAML
-
-file.
-
-Next, we are mapping the volume of db to the var lib MySQL directory inside the container.
-
-This is where MySQL will store all of its data and files.
-
-Finally, the ghost and db volumes are declared in the volume section of the compose YAML file.
-
-Now that you understand the configuration, click deploy the stack.
-
-After doing so, you should see a message that tells you that the stack was successfully created.
-
-Now that we have our blog deployed, we need to make it publicly available.
-
-To do that, we'll use a Cloudflare Tunnel.
-
-A Cloudflare tunnel is a secure service that creates an encrypted connection between your local server
-
-or application and cloudflare's network.
-
-This allows you to expose local services to the internet without opening firewall ports or even having
-
-a public IP address.
-
-To do that, you'll install a client called Cloudflare D on your Linux Docker host that securely connects
-
-to Cloudflare's network.
-
-Then Cloudflare routes external traffic to your service over that secure connection, which is called
-
-a tunnel.
-
-This connection is initiated from inside your network so no open ports are needed.
-
-It's fast, encrypted, and safe.
-
-To use.
-
-Cloudflare tunnels.
-
-You must use Cloudflare for DNS for your domain and run Cloudflare D tunnel client on your Docker host.
-
-You've already configured your domain to use Cloudflare for DNS, so the next step is to deploy Cloudflare
-
-D tunnel client.
-
-Log into Cloudflare at Cloudflare.
-
-Click on Zero Trust to access the section of Cloudflare site where you can configure tunnels.
-
-From there, click on networks and then click on tunnels.
-
-Next click add a tunnel.
-
-From there, select Cloudflare D.
-
-Now give your tunnel a name.
-
-Let's name it Self-hosted Tunnel, because we plan to only use one tunnel that connects to our self-hosted
-
-environment.
-
-Now click on Save Tunnel.
-
-On the Choose your Environment screen, select Docker, click on the copy icon next to the docker run
-
-command.
-
-Now open up a text editor on your system and paste the contents of your clipboard into that document.
-
-On windows, you can use notepad, and on macOS you can use text edit.
-
-After Dash Dash token, you'll see a long string of seemingly random text.
-
-This is your tunnel token.
-
-You'll need your tunnel token in the next step, so be sure to save it.
-
-Please note if there are any quotation marks or an ending quotation mark, it is not part of your tunnel
-
-token.
-
-Now it's time to deploy the Cloudflare D tunnel client using Portainer.
-
-And Portainer go to Stax.
-
-Click Add Stack and name it Cloudflare D.
-
-Now paste in the contents of the compose YAML file attached to this lesson.
-
-Be sure to use your token where it says replace with your token.
-
-Again, this is a seemingly random and long string of text.
-
-Also, note that your token should not have any quotation marks in it.
-
-So if the last character of your token is a quotation mark, then just remove that character.
-
-Once you've set your token, click on deploy the stack.
-
-Now return to the Cloudflare tab in your web browser and look at the connectors section of the page.
-
-You should see that there is one connector with a status of connected.
-
-Now click on next.
-
-On the Add Public Hostname screen, enter blog as the subdomain name.
-
-Next, select your domain.
-
-Leave the path blank.
-
-Under the service section, select HTTP as the type for the URL.
-
-Enter
-
-0.0.12368.
-
-Remember that 127.0.0.1 is a special IP address that means localhost or this host.
-
-Since Cloudflare D is running on your Docker host, we want it to connect to that same host on port
-
-2368 where the ghost service is running.
-
-Now click Complete Setup.
-
-At this point, you should be able to access the ghost service over the public internet using the name
-
-blogger Yourdomain.
-
-So I'm going to visit blogger academy.com.
-
-And sure enough, I see the service.
-
-The administration path for ghost is forward slash ghost.
-
-So let me visit blogger academy.com.
-
-Here you can create an account, set the title of your blog and start adding blog posts.
-
-I'll let you explore ghost on your own if you're interested.
-
-The important point here is that you took a self-hosted service and made it publicly available using
-
-your own domain name.
-
-Now, anyone in the world can visit your blog.
-
-They don't have to be connected to your telnet to do so.
-
-I should give you a word of caution here.
-
-When you follow this process, you're exposing that service to the entire world.
-
-So never, ever put anything on the internet that doesn't absolutely need to be there.
-
-For example, I would never make Portainer publicly accessible because it provides administrative access
-
-to your entire Docker environment.
-
-If someone gained access to that, they could do all sorts of bad things.
-
-You should make it so that you have to be connected to your telnet in order to access portainer.
-
-And that's what we've done by default.
-
-With that warning out of the way, I'm sure you're going to want to make other services public.
-
-To do that, go back to the tunnel section in Cloudflare and add another public hostname.
-
-So click the menu next to your self-hosted tunnel and click configure.
-
-From there, click on public host names.
-
-Now click on add a public host name.
-
-Let's say you want to make your IT tool service available on the internet.
-
-First you would give it a subdomain name such as IT tools.
-
-Then you would select your domain.
-
-You would then set the service type to HTTP and the URL to 127.0.0.18082.
-
-Click save to make the service public.
-
-Now when you visit it your domain, you will see the IT tools dashboard.
-
-By the way, I'm going to delete these records so they won't be accessible in the future.
-
-I just did this as a demonstration, so don't expect to visit blog academy.com and see the ghost website.
-
-Well, that brings us to the end of this lesson where you learned how to make self-hosted services publicly
-
-accessible through a secure Cloudflare tunnel.
+- Cloudflare Tunnels are for services you intentionally want to expose to the public internet.
+  - Previous lessons kept services private by routing them through Tailscale or tailnet-only names.
+  - Public services might include a blog, portfolio, documentation site, or public project page.
+  - Administrative services such as Portainer should usually remain private.
+- This lesson uses Ghost as the public-service example.
+  - Ghost is a blogging platform.
+  - The public hostname should match the `url` setting in the Ghost compose file.
+  - A dedicated hostname such as `blog.example.com` is cleaner than mixing a public app into an internal namespace.
+- Deploy Ghost from Portainer first.
+  - Open Portainer and select the local Docker environment.
+  - Go to Stacks, add a stack named `ghost`, and paste the lesson compose file.
+  - Change the `url` environment variable to the public address you plan to use.
+  - Deploy the stack and confirm it starts.
+- The Ghost stack contains the app and its database.
+  - The `ghost` service runs the Ghost application from the official `ghost:5` image.
+  - The `db` service runs MySQL from the official `mysql:8` image.
+  - Docker Compose creates a private network where the app can reach the database by the service name `db`.
+  - The `ghost` volume stores content such as images, themes, and logs.
+  - The `db` volume stores MySQL database files.
+- Cloudflare Tunnel publishes the local service without opening inbound firewall ports.
+  - The `cloudflared` connector runs on the Docker host.
+  - It creates an outbound encrypted connection from the host to Cloudflare.
+  - Cloudflare routes public requests for the hostname through that tunnel to the local service.
+  - You need Cloudflare DNS for the domain and a running `cloudflared` connector on the host.
+- Create the tunnel in the Cloudflare Zero Trust dashboard.
+  - Open Cloudflare: `Zero Trust`, then go to Networks and Tunnels.
+  - Add a tunnel and choose `cloudflared`.
+  - Give it a name such as `self-hosted-tunnel`.
+  - Select `Docker` as the environment and copy the generated Docker command: `docker run ... --token <token>`
+  - Save the tunnel token from the copied command after `--token`.
+  - Do not include surrounding quotation marks if they were copied with the token.
+- Deploy `cloudflared` from Portainer.
+  - Add a stack named `cloudflared`.
+  - Paste the lesson compose file (see below).
+  - Replace `REPLACE_WITH_YOUR_TOKEN` with the tunnel token.
+  - Deploy the stack.
+  - Check the Cloudflare web UI for a connected connector status; there should be a successful connector.
+- Add a public hostname route for Ghost.
+  - In the tunnel setup (`Cloudflare web UI > Zero Trust > Network > Tunnels > <our-tunnel>`), add a public hostname; to get there, click on next on the previous view, where the connector was shown.
+  - Use `blog` as the subdomain and select your domain.
+  - Leave the path blank unless you intentionally want path-based routing.
+  - Set the service type to `HTTP`.
+  - Set the service URL to `127.0.0.1:2368` because `cloudflared` runs on the Docker host and Ghost is exposed on host port `2368`.
+  - Complete the setup and visit `https://blog.example.com`.
+- Finish the Ghost setup in the browser.
+  - The public site is available at the hostname you configured.
+  - The Ghost administration page is available at `/ghost`.
+  - Anyone on the internet can reach this hostname after the tunnel route is active.
+- Be selective about what you publish.
+  - Public tunnel routes expose services to the world.
+  - Do not publish tools that control your server or Docker environment unless you have a strong reason and proper access controls.
+  - **Keep Portainer and similar administrative dashboards behind Tailscale or another private access method.**
+- Repeat the public-hostname process for each additional service you want to expose.
+  - Open the existing tunnel in Cloudflare and add another public hostname.
+  - Choose the subdomain for the service.
+  - Set the service type and local URL, such as `HTTP` and `127.0.0.1:8082` for IT-Tools.
+  - Save the route and test the public hostname.
+
+![Cloudflare Tunnel](./assets/cloudflare_tunnel.png)
+
+![Cloudflare Create Tunnel](./assets/cloudflare_create_tunnel.png)
+
+![Cloudflare Connector](./assets/cloudflare_connector.png)
+
+![Cloudflare Blog Tunnel](./assets/cloudflare_blog_tunnel.png)
+
+Ghost deployment file: [`ghost/compose.yaml`](./lab/self-hosted-course/docker-stacks/ghost/compose.yaml):
+
+- Runs Ghost and MySQL as one Compose application.
+- Publishes Ghost on host port `2368`.
+- Uses matching database credentials in the Ghost and MySQL service settings.
+- Stores Ghost content and MySQL data in named volumes.
+
+```yaml
+services:
+  ghost:
+    # Official Ghost image, version 5.
+    image: ghost:5
+    container_name: ghost
+    restart: unless-stopped
+    ports:
+      # Expose Ghost on the Docker host so cloudflared can reach it.
+      - 2368:2368
+    environment:
+      database__client: mysql
+      # Compose lets the app reach the database by service name.
+      database__connection__host: db
+      database__connection__user: root
+      database__connection__password: password123
+      database__connection__database: ghost
+      # Change this to the public hostname you will publish through Cloudflare.
+      url: https://blog.YOUR_DOMAIN
+    volumes:
+      # Store Ghost themes, images, and application content.
+      - ghost:/var/lib/ghost/content
+
+  db:
+    # MySQL version used by this lesson's Ghost deployment.
+    image: mysql:8
+    container_name: ghost-db
+    restart: unless-stopped
+    environment:
+      # Keep this in sync with database__connection__password above.
+      MYSQL_ROOT_PASSWORD: password123
+    volumes:
+      # Store MySQL data files.
+      - db:/var/lib/mysql
+
+volumes:
+  ghost:
+  db:
+```
+
+Cloudflare Tunnel deployment file: [`cloudflared/compose.yaml`](./lab/self-hosted-course/docker-stacks/cloudflared/compose.yaml):
+
+- Runs the Cloudflare Tunnel connector from the official `cloudflare/cloudflared` image.
+- Uses host networking so the connector can reach services exposed on the Docker host.
+- Starts a remotely managed tunnel with the token from Cloudflare.
+- Restarts automatically unless you stop it.
+
+```yaml
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared
+    # Let cloudflared connect to host-local service ports such as 127.0.0.1:2368.
+    network_mode: host
+    restart: unless-stopped
+    # Run the remotely managed tunnel configured in Cloudflare.
+    command: tunnel --no-autoupdate run
+    environment:
+      # Replace this with the token from the Cloudflare tunnel setup screen.
+      TUNNEL_TOKEN: REPLACE_WITH_YOUR_TOKEN
+```
 
 
 ## 10. Discovering & Deploying Additional Self-Hosted Services and Applications
