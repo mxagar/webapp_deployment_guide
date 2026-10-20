@@ -120,12 +120,13 @@ docker pull postgres:latest
 # --d: detach, run in the background and return terminal
 docker run --name psql -e POSTGRES_PASSWORD=password! -p 5433:5432 -d postgres:latest
 
-# -- Connect to the PostgreSQL container with psql
+# -- Connect to the PostgreSQL container with psql; pw: password! (the one passed via -e)
 psql -h 127.0.0.1 -p 5433 -U postgres
 # In psql
 \l  # list all databases
 \dti  # list all tables and relations
 # More psql commands: https://www.postgresql.org/docs/current/app-psql.html
+\q  @ quit
 
 # -- Clean up
 # List all containers
