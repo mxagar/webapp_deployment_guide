@@ -288,10 +288,44 @@ docker container rm <container_ID>
 
 #### Repository with More Exercises
 
-The [Udacity course repository](https://github.com/udacity/cd0157-Server-Deployment-and-Containerization) is included as a Git submodule in [`lab/udacity_server_deployment_exercises/`](./lab/udacity_server_deployment_exercises/). It contains additional course exercises and is pinned to a specific upstream commit.
+The [Udacity course repository](https://github.com/udacity/cd0157-Server-Deployment-and-Containerization) provides more exercises in [`lab/udacity_server_deployment_exercises/`](./lab/udacity_server_deployment_exercises/), included as a Git submodule pinned to a specific commit.
 
+This repository is included as a submodule in the `01_ServerDeployment/lab/udacity_server_deployment_exercises/` directory.
 
+Here, basically the same example as before is demonstrated using the submodule's Flask application.
 
+```bash
+# Use the Flask example already included in this guide's submodule
+cd .../lab/udacity_server_deployment_exercises/examples/flask
+
+# Build an image named test; -t means --tag, and . is the build context
+# Docker uses the Dockerfile in this directory by default
+# The upstream example uses the old python:3.7.2-slim base image
+# For a modernized exercise, change its FROM line to python:3.13-slim first
+# Editing upstream files creates local changes inside the submodule
+docker build -t test .
+docker image ls
+
+# Run the container; map host port 80 to Flask's container port 8080
+# This runs in the foreground; use another terminal for the commands below
+docker run --name myContainer -p 80:8080 test
+
+# In another terminal: request the app, or open http://localhost:80/ in a browser
+curl http://127.0.0.1:80/
+
+# If port 80 is busy, use -p 9090:8080 instead, then visit http://localhost:9090/
+
+# List running containers, then stop and remove this exercise's container
+docker ps
+docker stop myContainer
+docker container rm myContainer
+
+# Optional: remove the image after removing the container
+docker image rm test
+
+# Show help for container commands
+docker container help
+```
 
 ## AWS and Kubernetes
 
