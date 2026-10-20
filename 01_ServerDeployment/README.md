@@ -12,6 +12,8 @@ Table of Contents:
     - [Introduction](#introduction-1)
     - [Docker Concepts](#docker-concepts)
     - [DockerHub Example: Pull and Run PostgreSQL](#dockerhub-example-pull-and-run-postgresql)
+    - [Dockerfiles](#dockerfiles)
+    - [Dockerfile Exercises](#dockerfile-exercises)
   - [AWS and Kubernetes](#aws-and-kubernetes)
   - [Deployment Using CI/CD](#deployment-using-cicd)
   - [Project: Deploy Your Flask App to Kubernetes Using EKS](#project-deploy-your-flask-app-to-kubernetes-using-eks)
@@ -143,6 +145,9 @@ docker image ls
 docker image rm <image_ID>
 ```
 
+### Dockerfiles
+
+### Dockerfile Exercises
 
 ## AWS and Kubernetes
 
