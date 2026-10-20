@@ -1,3 +1,6 @@
 [submodule "notes_webapp"]
 	path = notes_webapp
 	url = https://github.com/mxagar/notes_webapp.git
+[submodule "01_ServerDeployment/lab/udacity_server_deployment_exercises"]
+	path = 01_ServerDeployment/lab/udacity_server_deployment_exercises
+	url = https://github.com/udacity/cd0157-Server-Deployment-and-Containerization.git

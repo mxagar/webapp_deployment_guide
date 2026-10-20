@@ -4,6 +4,22 @@ These are my notes after following the Udacity course [Server Deployment and Con
 
 See also my previous notes on [Docker & Kubernetes](https://github.com/mxagar/tool_guides/blob/master/docker_swarm_kubernetes/docker_swarm_kubernetes_howto.md).
 
+The [Udacity course repository](https://github.com/udacity/cd0157-Server-Deployment-and-Containerization) is included as a Git submodule in [`lab/udacity_server_deployment_exercises/`](./lab/udacity_server_deployment_exercises/). It contains additional course exercises and is pinned to a specific upstream commit.
+
+The submodule was added from this repository's root with:
+
+```bash
+git submodule add https://github.com/udacity/cd0157-Server-Deployment-and-Containerization.git 01_ServerDeployment/lab/udacity_server_deployment_exercises
+```
+
+To download the exercises after cloning this guide, run from the repository root:
+
+```bash
+git submodule update --init --recursive 01_ServerDeployment/lab/udacity_server_deployment_exercises
+```
+
+Alternatively, use `git clone --recurse-submodules <guide-repository-url>` when cloning this guide to download all its submodules.
+
 Table of Contents:
 - [Server Deployment and Containerization](#server-deployment-and-containerization)
   - [Introduction](#introduction)
@@ -14,6 +30,8 @@ Table of Contents:
     - [DockerHub Example: Pull and Run PostgreSQL](#dockerhub-example-pull-and-run-postgresql)
     - [Dockerfiles](#dockerfiles)
     - [Dockerfile Exercises](#dockerfile-exercises)
+      - [Simple Flask App](#simple-flask-app)
+      - [Repository with More Exercises](#repository-with-more-exercises)
   - [AWS and Kubernetes](#aws-and-kubernetes)
   - [Deployment Using CI/CD](#deployment-using-cicd)
   - [Project: Deploy Your Flask App to Kubernetes Using EKS](#project-deploy-your-flask-app-to-kubernetes-using-eks)
@@ -147,7 +165,133 @@ docker image rm <image_ID>
 
 ### Dockerfiles
 
+A `Dockerfile` is a text document that contains all the commands to assemble an image. It allows you to automate the image creation process.
+
+Typical `Dockerfile` instructions:
+
+```Dockerfile
+# Base image
+FROM python:3.13-slim
+
+# Copy files from current directory to /app in the container
+COPY . /app
+# Set the working directory inside the container
+WORKDIR /app
+
+# RUN: run any shell command
+RUN pip install --upgrade pip
+RUN pip install flask
+
+# ENTRYPOINT: set executable
+# Assuming there is a Python script named app.py in the working directory
+# and it accepts command-line arguments for configuration
+ENTRYPOINT ["python", "app.py"]
+# CMD: provide default arguments for the ENTRYPOINT
+CMD ["--port", "8000"]
+# Note: The CMD arguments can be overridden when running the container
+# docker run myapp
+# -> Runs: python app.py --port 8000
+# docker run myapp --port 9000
+# -> Runs: python app.py --port 9000
+```
+
+![Dockerfile: Build Image](./assets/docker_build_image.png)
+
+To build and run the Docker image:
+
+```bash
+# Build the image
+docker build -t myapp .
+
+# Run the container
+docker run --name myapp_container -p 8000:8000 myapp
+```
+
+For more details and commans, check the [`Dockerfile` reference](https://docs.docker.com/reference/dockerfile/).
+
 ### Dockerfile Exercises
+
+#### Simple Flask App
+
+Files in [`lab/01_dockerfile_flask_app/`](./lab/01_dockerfile_flask_app/):
+
+- `app.py`: The Flask application script.
+- `Dockerfile`: The Dockerfile to build the Flask app image.
+
+```python
+from flask import Flask
+import argparse
+
+# Flask app instance
+app = Flask(__name__)
+
+# Parse command-line arguments for the Flask app
+args = argparse.ArgumentParser()
+args.add_argument('--port', type=int, default=8080)
+
+@app.route('/')
+def hello_world():
+    return "Hello, World -- from Flask!"
+
+if __name__ == '__main__':
+    # Parse command-line arguments
+    parsed_args = args.parse_args()
+    port = parsed_args.port
+
+    # Run Flask app
+    app.run(host='0.0.0.0', port=port, debug=True)
+```
+
+```Dockerfile
+# Base image
+FROM python:3.13-slim
+
+# Copy files from current directory to /app in the container
+COPY . /app
+# Set the working directory inside the container
+WORKDIR /app
+
+# RUN: run any shell command
+RUN pip install --upgrade pip
+RUN pip install flask
+
+# ENTRYPOINT: set executable
+# Assuming there is a Python script named app.py in the working directory
+# and it accepts command-line arguments for configuration
+ENTRYPOINT ["python", "app.py"]
+# CMD: provide default arguments for the ENTRYPOINT
+CMD ["--port", "8080"]
+# Note: The CMD arguments can be overridden when running the container
+# docker run myapp
+# -> Runs: python app.py --port 8080
+# docker run myapp --port 9000
+# -> Runs: python app.py --port 9000
+```
+
+To build and run the Docker image:
+
+```bash
+cd .../lab/01_dockerfile_flask_app
+
+# Build the image
+docker build -t myapp .
+
+# Run the container
+docker run --name myapp_container --rm -p 8080:8080 myapp
+# --rm: automatically remove the container when it exits
+
+# List all containers (including stopped ones) + clean up
+docker ps -a
+docker container stop <container_ID>
+docker container rm <container_ID>
+```
+
+#### Repository with More Exercises
+
+The [Udacity course repository](https://github.com/udacity/cd0157-Server-Deployment-and-Containerization) is included as a Git submodule in [`lab/udacity_server_deployment_exercises/`](./lab/udacity_server_deployment_exercises/). It contains additional course exercises and is pinned to a specific upstream commit.
+
+
+
 
 ## AWS and Kubernetes
 
