@@ -1,0 +1,29 @@
+[project]
+name = "server-deployment-lab"
+version = "0.1.0"
+description = "Python environment for the server deployment and containerization exercises"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "pyjwt>=2.15.1,<3",
+    "flask>=3.1.3,<4",
+    "jinja2>=3.1.6,<4",
+    "markupsafe>=3.0.4,<4",
+    "ruamel.yaml>=0.19.1,<0.20",
+    "itsdangerous>=2.2.0,<3",
+    "werkzeug>=3.1.9,<4",
+    # Gunicorn runs on Unix; use Flask locally on Windows.
+    "gunicorn>=26.2.0,<27; sys_platform != 'win32'",
+    "pandas>=3.0.6,<4",
+    "matplotlib>=3.11.2,<4",
+    "scikit-learn>=1.9.1,<2",
+    "numpy>=2.5.4,<3",
+    "python-dotenv>=1.2.4,<2",
+    "boto3>=1.43.116,<2",
+]
+
+[dependency-groups]
+dev = ["pytest>=9.1.1,<10"]
+
+[tool.uv]
+package = false

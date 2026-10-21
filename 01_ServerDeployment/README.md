@@ -24,6 +24,8 @@ Table of Contents:
 - [Server Deployment and Containerization](#server-deployment-and-containerization)
   - [Introduction](#introduction)
     - [Container and Deployment Overview](#container-and-deployment-overview)
+    - [Environment Setup](#environment-setup)
+      - [AWS CLI and Credentials](#aws-cli-and-credentials)
   - [Containers](#containers)
     - [Introduction](#introduction-1)
     - [Docker Concepts](#docker-concepts)
@@ -33,6 +35,9 @@ Table of Contents:
       - [Simple Flask App](#simple-flask-app)
       - [Repository with More Exercises](#repository-with-more-exercises)
   - [AWS and Kubernetes](#aws-and-kubernetes)
+    - [Introduction to Kubernetes and Project Overview](#introduction-to-kubernetes-and-project-overview)
+    - [AWS Resources and Cost](#aws-resources-and-cost)
+    - [AWS Setup](#aws-setup)
   - [Deployment Using CI/CD](#deployment-using-cicd)
   - [Project: Deploy Your Flask App to Kubernetes Using EKS](#project-deploy-your-flask-app-to-kubernetes-using-eks)
 
@@ -57,6 +62,82 @@ Pre-requisites (knowledge in):
 > - [Kubernetes](https://kubernetes.io/) is a container orchestration system that automates container deployment, scaling, and management and will be used in this course.
 
 ![Container and Deployment Overview](./assets/docker_kubernetes_overview.png)
+
+### Environment Setup
+
+- Use [uv](https://docs.astral.sh/uv/) with Python 3.13 and the local [`pyproject.toml`](./pyproject.toml). It updates all packages from the course's `requirements.txt` and adds NumPy, pandas, Matplotlib, scikit-learn, python-dotenv (`import dotenv`), and Boto3.
+- `pytest` is a development dependency, installed by default. Gunicorn is installed only on Unix systems; use Flask for local Windows exercises and Linux containers for Gunicorn.
+- `uv.lock` records exact resolved versions. Keep it in version control; `.venv/` and `.env` are already ignored.
+
+```powershell
+# Run from this guide's repository root (PowerShell)
+cd .../01_ServerDeployment
+
+# Install Python 3.13 if needed, then create .venv and install locked dependencies
+uv python install 3.13
+uv sync --locked --python 3.13
+
+# Run commands inside the environment without activating it
+uv run python --version
+uv run python lab/01_dockerfile_flask_app/app.py --port 8080
+# Stop the app with Ctrl+C
+
+# Optional: activate the environment to use python and pytest directly
+.\.venv\Scripts\Activate.ps1
+# In Bash on Linux/macOS/WSL: source .venv/bin/activate
+# In Git Bash on Windows: source .venv/Scripts/activate
+deactivate
+
+# After intentionally editing dependencies, resolve and install the new versions
+# uv lock
+# uv sync --locked
+# To refresh versions within the declared bounds: uv lock --upgrade
+```
+
+The upstream JWT exercise needs modernization with these dependencies: PyJWT 2.x returns a string from `jwt.encode()`, so remove `.decode('utf-8')` from the `/auth` response in `main.py` when adapting that exercise. The submodule and its old requirements are preserved. This environment does not change Docker builds; those use their own Dockerfile and dependency installation steps.
+
+#### AWS CLI and Credentials
+
+- Install [AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) separately from the Python environment. Boto3 is the Python SDK (Software Development Kit); it does not install the CLI. Avoid adding the PyPI `awscli` package, which provides CLI v1.
+- On this machine, CLI v2 is already installed at `C:\Program Files\Amazon\AWSCLIV2\aws.exe`. A broken Poetry-environment command currently shadows it on `PATH`; the commands below select the working installation for this terminal. If needed, fix the persistent Windows `PATH` order and reopen the terminal.
+- Use a named profile such as `course`. For IAM (Identity and Access Management) Identity Center, use SSO (single sign-on); otherwise use the credentials supplied for the course or an IAM user. Boto3 uses the same profile and credential files. Keep credentials out of source files and Git.
+
+```powershell
+# Only if CLI v2 is missing: install using AWS's Windows installer, then reopen the terminal
+# msiexec.exe /i https://awscli.amazonaws.com/AWSCLIV2.msi
+
+# Check which aws commands Windows finds; prioritize CLI v2 in this terminal
+Get-Command aws -All
+$env:PATH = "C:\Program Files\Amazon\AWSCLIV2;" + $env:PATH
+aws --version
+# Expected prefix: aws-cli/2
+
+# Choose ONE authentication method
+# A: IAM Identity Center (requires your organization's SSO access details)
+aws configure sso --profile course
+aws sso login --profile course
+# Repeat the login command when the SSO session expires
+
+# B: access keys supplied for your account/course, entered interactively
+# aws configure --profile course
+# For temporary credentials, also set the supplied session token interactively:
+# aws configure set aws_session_token (Read-Host "Session token") --profile course
+# Refresh all temporary credentials when they expire
+
+# Select the same profile for CLI commands and Boto3 in this terminal
+$env:AWS_PROFILE = "course"
+# Bash equivalent: export AWS_PROFILE=course
+
+# Choose your deployment region (example: Frankfurt) and JSON output
+aws configure set region eu-central-1 --profile course
+aws configure set output json --profile course
+
+# Verify authentication; these commands do not create cloud resources
+aws sts get-caller-identity
+uv run python -c "import boto3; print(boto3.client('sts').get_caller_identity()['Arn'])"
+```
+
+AWS stores profiles under `~/.aws/config` and access-key credentials under `~/.aws/credentials` (on Windows, `~` is your user directory). `python-dotenv` reads `.env` only when your application calls `load_dotenv()`; AWS tools do not automatically load that file. See the [AWS profile and SSO guide](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html).
 
 ## Containers
 
@@ -329,7 +410,50 @@ docker container help
 
 ## AWS and Kubernetes
 
-:construction:
+### Introduction to Kubernetes and Project Overview
+
+- Docker packages an application with its environment and dependencies. Cloud deployment also requires managing how its container instances run and scale.
+- **Container orchestration** manages containers across multiple hosts.
+  - Creates and removes instances as needed; automatic scaling requires configuration.
+  - Handles load balancing, health checks, configuration, networking, and container lifecycle management.
+  - This course uses **Kubernetes** for orchestration.
+- A **CI/CD (continuous integration and continuous delivery) pipeline** connects a shared code repository to the target infrastructure.
+  - Typical steps: compile code when needed, run tests, build deployable artifacts, and deploy releases.
+  - **Continuous integration (CI)** automatically builds and tests code changes outside production.
+    - This course uses **AWS (Amazon Web Services) CodeBuild**; Jenkins is another option.
+  - **Continuous delivery (CD)** keeps tested changes ready for release through an automated pipeline. Production deployment can require approval.
+    - **Continuous deployment** also automates the production release without manual approval.
+    - This course uses **AWS CodePipeline** to coordinate the release stages and support frequent, incremental releases.
+- **Lesson objectives:**
+  - Deploy a containerized application using **Amazon EKS (Elastic Kubernetes Service)**, AWS's managed Kubernetes service.
+  - Set up continuous integration with AWS CodeBuild.
+  - Create a continuous delivery pipeline with AWS CodePipeline.
+
+The project uses these components:
+- **Amazon EKS** for Kubernetes orchestration.
+- **AWS CodeBuild** for continuous integration.
+- **AWS CodePipeline** for continuous delivery.
+- **Docker** for containerizing the application.
+- **Flask** as the web application framework.
+
+![AWS and Kubernetes Project Overview](./assets/aws_kubernetes_project.png)
+
+### AWS Resources and Cost
+
+Contents:
+
+- **AWS access setup**: how to sign in for course cloud work
+- **Cost awareness**: AWS can incur charges if resources stay running; check [https://aws.amazon.com/pricing/](https://aws.amazon.com/pricing/).
+  - Track costs: ` Billing and Cost Management > AWS Cost Explorer`.
+- **Use course-provided resources**: follow the classroom instructions for credentials and access; we have a dedicated set of resources for the course (25 USD credits), accessible via `Cloud Resources`. We need to log out from any AWS accounts first.
+- **Avoid surprise billing**: shut down or clean up services when you're done: EC2, Sagemaker, Database, EMR, CloudFormation.
+
+However, I used my own AWS account for the course & the project.
+
+### AWS Setup
+
+
+
 
 ## Deployment Using CI/CD
 
