@@ -101,6 +101,57 @@ The upstream JWT exercise needs modernization with these dependencies: PyJWT 2.x
 - Install [AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) separately from the Python environment. Boto3 is the Python SDK (Software Development Kit); it does not install the CLI. Avoid adding the PyPI `awscli` package, which provides CLI v1.
 - On this machine, CLI v2 is already installed at `C:\Program Files\Amazon\AWSCLIV2\aws.exe`. A broken Poetry-environment command currently shadows it on `PATH`; the commands below select the working installation for this terminal. If needed, fix the persistent Windows `PATH` order and reopen the terminal.
 - Use a named profile such as `course`. For IAM (Identity and Access Management) Identity Center, use SSO (single sign-on); otherwise use the credentials supplied for the course or an IAM user. Boto3 uses the same profile and credential files. Keep credentials out of source files and Git.
+  - SSO means Single Sign-On: you sign in through a central login system to access multiple applications or AWS accounts. **We should use the SSO for our everyday access instead of the root account.**
+  - Sign in as root and enable MFA (multi-factor authentication).
+  - Set up your everyday access through IAM Identity Center (SSO) or an IAM user.
+    - We get a dedicated access URL: `https://<your-portal>.awsapps.com/start`
+  - Sign out of root, then use that identity to create and manage resources.
+
+To enable SSO:
+
+```text
+AWS Console (initial setup as root): https://console.aws.amazon.com
+  Open: IAM Identity Center
+  Select the region where Identity Center is configured
+  Enable it if needed
+    Use an organization instance with multi-account permissions
+
+Left panel -> Users
+  If no user exists -> Add user
+    Enter username, email, and name
+    Select the option to send an invitation email
+    Accept the invitation and set a password
+
+Left panel -> AWS accounts
+  Select your AWS account
+  Assign users or groups -> Users
+    Select your existing/new user
+  Select permission sets -> Create permission set
+    Predefined permission set -> AdministratorAccess
+    Session duration: 1 hour
+    Relay state: leave blank
+    Create
+  Return to the assignment workflow
+    Select AdministratorAccess
+    Complete the assignment and wait for success
+
+Dashboard -> Copy the AWS access portal URL: https://<your-portal>.awsapps.com/start
+  Open it in a private browser window
+  Sign in using your SSO credentials
+  Your account should appear as Mikel / account ID
+    Expand it -> AdministratorAccess -> Open AWS Console
+  If no accounts appear:
+    Confirm the user/account/permission-set assignment completed
+    Sign out of the portal and sign back in
+
+After confirming SSO access works:
+  Sign out of the root console session
+  Use the access portal for subsequent console sign-ins
+    https://<your-portal>.awsapps.com/start
+    Account > AdministratorAccess > Open AWS Console
+```
+
+To configure the CLI:
 
 ```powershell
 # Only if CLI v2 is missing: install using AWS's Windows installer, then reopen the terminal
@@ -113,28 +164,46 @@ aws --version
 # Expected prefix: aws-cli/2
 
 # Choose ONE authentication method
-# A: IAM Identity Center (requires your organization's SSO access details)
-aws configure sso --profile course
-aws sso login --profile course
+# Opetion A: IAM Identity Center (requires your organization's SSO access details)
+# One-time setup: saves the SSO settings as a local profile named course
+# During setup, the CLI opens your browser.
+# Sign in there with your SSO credentials and approve access
+# ~/.aws/config: profile saved, portal URL, SSO region, account ID, role, and default region
+# ~/.aws/sso/cache/: Cached SSO tokens
+# ~/.aws/cli/cache/: Cached temporary role credentials
+aws configure sso --profile deployment-course
+# SSO session name (Recommended): deployment-course-sso
+# SSO start URL [None]: https://<your-portal>.awsapps.com/start
+# SSO region [None]: <your-sso-region>, e.g. eu-central-1
+# SSO registration scopes [sso:account:access]: <ENTER>
+# Web is opened, we log in with our SSO credentials and approve access
+# After that, we can always log is as follows:
+aws sso login --profile deployment-course
 # Repeat the login command when the SSO session expires
+# To log out:
+# aws sso logout
 
-# B: access keys supplied for your account/course, entered interactively
-# aws configure --profile course
+# Verify access
+aws sts get-caller-identity --profile deployment-course
+
+# Option B: access keys supplied for your account/course, entered interactively
+# aws configure --profile deployment-course
 # For temporary credentials, also set the supplied session token interactively:
-# aws configure set aws_session_token (Read-Host "Session token") --profile course
+# aws configure set aws_session_token (Read-Host "Session token") --profile deployment-course
 # Refresh all temporary credentials when they expire
 
 # Select the same profile for CLI commands and Boto3 in this terminal
-$env:AWS_PROFILE = "course"
-# Bash equivalent: export AWS_PROFILE=course
+# And/or add it to .env
+$env:AWS_PROFILE = "deployment-course"
+# Bash equivalent: export AWS_PROFILE=deployment-course
 
 # Choose your deployment region (example: Frankfurt) and JSON output
-aws configure set region eu-central-1 --profile course
-aws configure set output json --profile course
+aws configure set region eu-central-1 --profile deployment-course
+aws configure set output json --profile deployment-course
 
 # Verify authentication; these commands do not create cloud resources
-aws sts get-caller-identity
-uv run python -c "import boto3; print(boto3.client('sts').get_caller_identity()['Arn'])"
+aws sts get-caller-identity --profile deployment-course
+uv run python -c "import boto3; s = boto3.Session(profile_name='deployment-course'); print(s.client('sts').get_caller_identity()['Arn'])"
 ```
 
 AWS stores profiles under `~/.aws/config` and access-key credentials under `~/.aws/credentials` (on Windows, `~` is your user directory). `python-dotenv` reads `.env` only when your application calls `load_dotenv()`; AWS tools do not automatically load that file. See the [AWS profile and SSO guide](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html).
@@ -440,6 +509,8 @@ The project uses these components:
 
 ### AWS Resources and Cost
 
+AWS Console: [https://console.aws.amazon.com](https://console.aws.amazon.com)
+
 Contents:
 
 - **AWS access setup**: how to sign in for course cloud work
@@ -452,8 +523,32 @@ However, I used my own AWS account for the course & the project.
 
 ### AWS Setup
 
+AWS Console: [https://console.aws.amazon.com](https://console.aws.amazon.com)
 
+Check section [AWS CLI and Credentials](#aws-cli-and-credentials).
 
+Log in using AWS SSO:
+
+```text
+https://<your-portal>.awsapps.com/start
+Account > AdministratorAccess > Open AWS Console
+```
+
+```bash
+# In the Terminal, for AWS CLI:
+aws sso login --profile deployment-course
+# Repeat the login command when the SSO session expires
+# To log out:
+# aws sso logout
+
+# Verify access
+aws sts get-caller-identity --profile deployment-course
+
+# Select the same profile for CLI commands and Boto3 in this terminal
+# And/or add it to .env
+$env:AWS_PROFILE = "deployment-course"
+# Bash equivalent: export AWS_PROFILE=deployment-course
+```
 
 ## Deployment Using CI/CD
 
