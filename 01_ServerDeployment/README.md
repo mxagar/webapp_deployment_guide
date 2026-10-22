@@ -38,6 +38,14 @@ Table of Contents:
     - [Introduction to Kubernetes and Project Overview](#introduction-to-kubernetes-and-project-overview)
     - [AWS Resources and Cost](#aws-resources-and-cost)
     - [AWS Setup](#aws-setup)
+    - [AWS CLI](#aws-cli)
+    - [S3: Create a Bucket](#s3-create-a-bucket)
+      - [S3 via AWS CLI](#s3-via-aws-cli)
+    - [Elastic Compute Cloud (EC2)](#elastic-compute-cloud-ec2)
+      - [EC2 via AWS CLI](#ec2-via-aws-cli)
+    - [IAM Service](#iam-service)
+    - [Extra: RDS](#extra-rds)
+      - [RDS via AWS CLI](#rds-via-aws-cli)
   - [Deployment Using CI/CD](#deployment-using-cicd)
   - [Project: Deploy Your Flask App to Kubernetes Using EKS](#project-deploy-your-flask-app-to-kubernetes-using-eks)
 
@@ -549,6 +557,164 @@ aws sts get-caller-identity --profile deployment-course
 $env:AWS_PROFILE = "deployment-course"
 # Bash equivalent: export AWS_PROFILE=deployment-course
 ```
+
+### AWS CLI
+
+TBD.
+
+### S3: Create a Bucket
+
+S3 = Simple Storage Service:
+
+- To upload/download any files
+- Organized in buckets
+- We can define who can access the bucket contents
+- There are different bucket classes: standard, intelligent-tiering, glacier, etc. (depending of expected access frequency and desired cost, etc.)
+
+Log in using AWS SSO:
+
+```text
+https://<your-portal>.awsapps.com/start
+Account > AdministratorAccess > Open AWS Console
+```
+
+Create a new S3 bucket via the web UI (i.e., teh AWS console):
+
+```
+AWS Console > S3 > Create bucket
+  Bucket name: [<your-name>-]server-deployment[-<random-number>]
+    It must be a unique name, we can attach a random number to it
+  AWS Region: Frankfurt (eu-central-1) (or desired region)
+  Block Public Access settings for this bucket:
+    Uncheck "Block all public access"
+    Acknowledge the warning
+    Note: This allows public access to the bucket, so be cautious with sensitive data!
+  Bucket Versioning: Disable
+  Create bucket
+  When created, click on bucket and we see we can upload objects
+```
+
+We can upload objects to the bucket:
+
+- Go to the bucket, click on "Upload" and select the files you want to upload.
+- The uploeaded objects get a unique URL.
+- We can download & open the object in a browser from the web UI.
+- Even though the we make the bucket public and the objects have a unique URL, we can use it from the outside if we explicitly make the object public: `Select Object: Object actions > Make public using ACL `. So a public bucket can contain public and non-public objects.
+- We can also empty and delete the buckets via the web UI.
+
+![S3 Create Bucket](./assets/s3_create.png)
+
+![S3 Public Access](./assets/s3_public_access.png)
+
+![S3 Upload](./assets/s3_upload.png)
+
+![S3 Object Properties](./assets/s3_object_properties.png)
+
+#### S3 via AWS CLI
+
+TBD.
+
+### Elastic Compute Cloud (EC2)
+
+Elastic Compute Cloud = EC2
+
+- Configurable Virtual Machines (VMs) in the cloud: we choose OS, CPU, RAM, etc.
+- There are several pricing options:
+  - Pay as you go = on-demand
+  - Dedicated hosts = we don't share them
+  - Spot instances = use spare capacity at a lower cost, but can be terminated by AWS with short notice
+  - ...
+
+Log in using AWS SSO:
+
+```text
+https://<your-portal>.awsapps.com/start
+Account > AdministratorAccess > Open AWS Console
+```
+
+Create a new EC2 instance via the web UI (i.e., the AWS console):
+
+```
+AWS Console > EC2 > Launch Instance
+  Name: [<your-name>-]server-deployment[-<random-number>]
+  Choose an Amazon Machine Image (AMI): e.g., Amazon Linux 2
+  Choose an Instance Type: e.g., t2.micro
+    t2.micro is the smallest
+  Key pair
+    This allows us to securely connect to the instance via SSH using the key pair.
+    If we don't have one, we can create a new key pair here.
+    Create a new key pair:
+      Key pair name: ...
+      Choose: RAS / ED25519
+      Choose: .pem (Mac/Linux) / .pkk (PuTTY)
+    When created, download the private key file and keep it safe!
+      The private key is downloaded: .pem
+      The public key (.pub) is stored in AWS: ~/.ssh/authorized_keys
+  Network settings
+    Default network, no subnet, enable public IP
+    Allow SSH from anywhere: 0.0.0.0/0º
+  Add Storage: default settings
+    8 GB pf gp2
+  Add Tags: optional
+  Configure Security Group: allow SSH (port 22) and HTTP (port 80)
+  Review and Launch
+  Launch Instance
+```
+
+Once created, we can go to the EC2 dashboard and click on it:
+
+- We see the instance details, including its public IP address, DNS, instance ID, status, and other configuration information. Example:
+  - Public IP: e.g., 2xx.xxx.xxx.xxx
+  - Public DNS: e.g., ec2-2x.xxx.xxx.xxx.compute-1.amazonaws.com
+  - Instance ID: e.g., i-xxx
+  - Status: e.g., running
+- We can also stop, start, reboot, or terminate the instance from the instance dashboard. Choose instance and then:
+  - `Stop`: instance is stopped, but it still exists and can be started again. Watch out: even though an instance is stopped, we may still incur costs for attached storage.
+  - `Terminate`: instance is permanently deleted and cannot be recovered; all associated resources are removed and no further costs should be incurred.
+- If we click on `Connect`, we see the ways to connect to it:
+  - **EC2 Instance Connect: connect directly from the browser**. Write `exit` to shut down the session.
+  - **SSH client: connect from our machine using SSH with the private key we downloaded earlier (see below)**.
+  - Session Manager: connect using AWS Systems Manager
+  - EC2 Serial Console: connect using the EC2 Serial Console
+
+We can connect to the EC2 instance using SSH:
+
+```bash
+# Restrict premissions
+chmod 400 path/to/private-key.pem
+# Connect to the instance using SSH: get the IP from the EC2 dashboard
+ssh -i "path/to/your/private-key.pem" ubuntu@<instance-public-ip>
+# Default user for Amazon Linux 2: ec2-user
+```
+
+#### EC2 via AWS CLI
+
+### IAM Service
+
+Elastic Compute Cloud = IAM
+
+- a
+- b
+
+Log in using AWS SSO:
+
+```text
+https://<your-portal>.awsapps.com/start
+Account > AdministratorAccess > Open AWS Console
+```
+
+Manage ... via the web UI (i.e., the AWS console):
+
+### Extra: RDS 
+
+RDS = Relational Database Service, i.e., PostgreSQL, MySQL, MariaDB, Oracle, or SQL Server managed by AWS
+
+- a
+- b
+
+#### RDS via AWS CLI
+
+
 
 ## Deployment Using CI/CD
 
