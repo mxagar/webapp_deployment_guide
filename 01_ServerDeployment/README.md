@@ -42,10 +42,17 @@ Table of Contents:
     - [Elastic Compute Cloud (EC2)](#elastic-compute-cloud-ec2)
     - [IAM Service](#iam-service)
     - [Extra: RDS](#extra-rds)
-    - [AWS CLI](#aws-cli)
-      - [S3 via AWS CLI](#s3-via-aws-cli)
-      - [EC2 via AWS CLI](#ec2-via-aws-cli)
-      - [RDS via AWS CLI](#rds-via-aws-cli)
+    - [AWS CLI Configuration](#aws-cli-configuration)
+      - [Create an IAM User to Manage AWS Resources via CLI](#create-an-iam-user-to-manage-aws-resources-via-cli)
+      - [Configure AWS CLI](#configure-aws-cli)
+      - [Extra: IAM via AWS CLI](#extra-iam-via-aws-cli)
+      - [Extra: S3 via AWS CLI](#extra-s3-via-aws-cli)
+      - [Extra: EC2 via AWS CLI](#extra-ec2-via-aws-cli)
+      - [Extra: RDS via AWS CLI](#extra-rds-via-aws-cli)
+    - [Introduction to Kubernetes](#introduction-to-kubernetes)
+    - [Kubernetes Concepts](#kubernetes-concepts)
+    - [Kubernetes Components](#kubernetes-components)
+    - [EKS: Amazon Elastic Kubernetes Service](#eks-amazon-elastic-kubernetes-service)
   - [Deployment Using CI/CD](#deployment-using-cicd)
   - [Project: Deploy Your Flask App to Kubernetes Using EKS](#project-deploy-your-flask-app-to-kubernetes-using-eks)
 
@@ -106,7 +113,7 @@ The upstream JWT exercise needs modernization with these dependencies: PyJWT 2.x
 
 #### AWS CLI and Credentials
 
-- Install [AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) separately from the Python environment. Boto3 is the Python SDK (Software Development Kit); it does not install the CLI. Avoid adding the PyPI `awscli` package, which provides CLI v1.
+- The Python environment includes the PyPI `awscli` package (AWS CLI v1). For the SSO workflow below, install [AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) separately and ensure it takes precedence on `PATH`. Boto3 is the Python SDK (Software Development Kit); it does not install the CLI.
 - On this machine, CLI v2 is already installed at `C:\Program Files\Amazon\AWSCLIV2\aws.exe`. A broken Poetry-environment command currently shadows it on `PATH`; the commands below select the working installation for this terminal. If needed, fix the persistent Windows `PATH` order and reopen the terminal.
 - Use a named profile such as `course`. For IAM (Identity and Access Management) Identity Center, use SSO (single sign-on); otherwise use the credentials supplied for the course or an IAM user. Boto3 uses the same profile and credential files. Keep credentials out of source files and Git.
   - SSO means Single Sign-On: you sign in through a central login system to access multiple applications or AWS accounts. **We should use the SSO for our everyday access instead of the root account.**
@@ -159,11 +166,13 @@ After confirming SSO access works:
     Account > AdministratorAccess > Open AWS Console
 ```
 
-To configure the CLI:
+To configure the CLI with the SSO authentication, follow the steps below:
 
 ```powershell
 # Only if CLI v2 is missing: install using AWS's Windows installer, then reopen the terminal
 # msiexec.exe /i https://awscli.amazonaws.com/AWSCLIV2.msi
+# Alternative: install it via pip:
+# uv pip install awscli --upgrade
 
 # Check which aws commands Windows finds; prioritize CLI v2 in this terminal
 Get-Command aws -All
@@ -214,7 +223,9 @@ aws sts get-caller-identity --profile deployment-course
 uv run python -c "import boto3; s = boto3.Session(profile_name='deployment-course'); print(s.client('sts').get_caller_identity()['Arn'])"
 ```
 
-AWS stores profiles under `~/.aws/config` and access-key credentials under `~/.aws/credentials` (on Windows, `~` is your user directory). `python-dotenv` reads `.env` only when your application calls `load_dotenv()`; AWS tools do not automatically load that file. See the [AWS profile and SSO guide](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html).
+AWS stores profiles under `~/.aws/config` and access-key credentials under `~/.aws/credentials`. `python-dotenv` reads `.env` only when your application calls `load_dotenv()`; AWS tools do not automatically load that file. See the [AWS profile and SSO guide](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html).
+
+Here, we use the SSO authentication to configure the AWS CLI. Later, in section [AWS CLI Configuration](#aws-cli-configuration) we see how to create a dedicated user to configure the AWS CLI, which is the best practice.
 
 ## Containers
 
@@ -893,15 +904,68 @@ RDS > Databases > Select deployment-course-db > Actions
 
 See [connecting to RDS PostgreSQL](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_ConnectToPostgreSQLInstance.html) and [TLS certificate verification](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.SSL.html).
 
-### AWS CLI
+### AWS CLI Configuration
 
 The [AWS CLI](https://aws.amazon.com/cli/) is a command-line tool that allows you to interact with AWS services directly from your terminal.
 
-#### S3 via AWS CLI
+The section [AWS CLI and Credentials](#aws-cli-and-credentials) shows how to configure the AWS CLI with the SSO authentication. **Here, we will create a dedicated user with admin privileges for managing AWS resources via the CLI (programmatically).**
 
-#### EC2 via AWS CLI
+Some links:
 
-#### RDS via AWS CLI
+- [AWS CLI commands reference](https://docs.aws.amazon.com/cli/latest/reference/)
+- [Installing or updating to the latest version of the AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/install-cliv2.html)
+- [Configuration basics](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-quickstart.html)
+- [Configuration and credential file settings](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html)
+- [Environment variables to configure the AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-envvars.html)
+
+To install or update the AWS CLI, run the following commands:
+
+```bash
+# Install or update the AWS CLI if needed
+uv pip install --upgrade awscli
+
+# See the current version
+aws --version
+# aws-cli/2.27.22 Python/3.13.3 Windows/11 exe/AMD64
+```
+
+#### Create an IAM User to Manage AWS Resources via CLI
+
+#### Configure AWS CLI
+
+#### Extra: IAM via AWS CLI
+
+List users, policies, etc.
+Add users, policies, etc.
+Remove users, policies, etc.
+
+#### Extra: S3 via AWS CLI
+
+List S3 buckets, objects, etc.
+Add S3 buckets, objects, etc.
+Remove S3 buckets, objects, etc.
+Make an object public, and revoke public access.
+
+#### Extra: EC2 via AWS CLI
+
+List EC2 instances, security groups, etc.
+Add and Start EC2 instances, security groups, etc.
+Stop and Remove EC2 instances, security groups, etc.
+
+#### Extra: RDS via AWS CLI
+
+List RDS instances, snapshots, security groups, etc.
+Add RDS instances, snapshots, security groups, etc.
+Remove RDS instances, snapshots, security groups, etc.
+Access to RDS instance via CLI.
+
+### Introduction to Kubernetes
+
+### Kubernetes Concepts
+
+### Kubernetes Components
+
+### EKS: Amazon Elastic Kubernetes Service
 
 ## Deployment Using CI/CD
 
