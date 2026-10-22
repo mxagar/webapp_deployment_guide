@@ -45,10 +45,10 @@ Table of Contents:
     - [AWS CLI Configuration](#aws-cli-configuration)
       - [Create an IAM User to Manage AWS Resources via CLI](#create-an-iam-user-to-manage-aws-resources-via-cli)
       - [Configure AWS CLI](#configure-aws-cli)
-      - [Extra: IAM via AWS CLI](#extra-iam-via-aws-cli)
-      - [Extra: S3 via AWS CLI](#extra-s3-via-aws-cli)
-      - [Extra: EC2 via AWS CLI](#extra-ec2-via-aws-cli)
-      - [Extra: RDS via AWS CLI](#extra-rds-via-aws-cli)
+      - [S3 Management via AWS CLI](#s3-management-via-aws-cli)
+      - [Extra: IAM Management via AWS CLI](#extra-iam-management-via-aws-cli)
+      - [Extra: EC2 Management via AWS CLI](#extra-ec2-management-via-aws-cli)
+      - [Extra: RDS Management via AWS CLI](#extra-rds-management-via-aws-cli)
     - [Introduction to Kubernetes](#introduction-to-kubernetes)
     - [Kubernetes Concepts](#kubernetes-concepts)
     - [Kubernetes Components](#kubernetes-components)
@@ -957,14 +957,14 @@ Account > AdministratorAccess > Open AWS Console
 
 ```text
 AWS Console: IAM > Users > Create user
-  User name: deployment-course-admin
+  User name: deployment-admin
   Console access: leave disabled for this CLI-only exercise
   Permissions: Attach policies directly > AdministratorAccess (course demonstration)
     A group with the required policies is another way to manage permissions
   Tags: optional
   Review > Create user
 
-Users > deployment-course-admin > Security credentials > Access keys > Create access key
+Users > deployment-admin > Security credentials > Access keys > Create access key
   Use case: Command Line Interface (CLI)
   Review the alternatives and acknowledge the recommendation if prompted
   Description tag: optional
@@ -982,13 +982,9 @@ Older screenshots select "Programmatic access" during user creation
 - A **profile** is a named set of local settings, not an AWS user. Keep credentials separate:
   - `deployment-course`: existing SSO profile; authenticate with `aws sso login`.
   - `deployment-course-iam`: new IAM user's access keys; configure with `aws configure`.
-  - `deployment-course-classroom`: optional temporary classroom credentials, including the session token.
-- Configure the access key ID, secret access key, default region, and output format. CLI v2 supports `json`, `yaml`, `yaml-stream`, `text`, and `table`.
-  - The video uses `us-east-2`; this guide uses `eu-central-1`. Choose the region containing your resources; the video's historical Kubernetes issue in `us-east-1` is not a general restriction.
-- Standard files are discovered automatically: `~/.aws/credentials` for access keys and `~/.aws/config` for profile settings. SSO settings and cached tokens remain separate from the IAM key profile.
-  - On Windows, `~` is your user directory. WSL (Windows Subsystem for Linux) has its own Linux home and configuration files.
-  - `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE` are only needed to override these paths. Git Bash does not require `setx` or permanently exported access keys.
-- Avoid reusing the SSO profile name for `aws configure`: mixing static keys into it can cause the wrong identity to be selected. Keep SSO as your everyday profile.
+  - `deployment-course-classroom`: optional temporary (Udacity-provided) classroom credentials, including the session token.
+- Configure the access key ID, secret access key (as shown below), default region, and output format. CLI v2 supports `json`, `yaml`, `yaml-stream`, `text`, and `table`.
+  - The video uses `us-east-2`; this guide uses `eu-central-1`. Choose the region containing your resources.
 
 ```powershell
 # Verify CLI v2; activation of .venv may put the PyPI CLI v1 first on PATH
@@ -1014,12 +1010,15 @@ aws configure --profile deployment-course-iam
 
 # Inspect profile names and masked configuration; update an individual setting
 aws configure list-profiles
+# deployment-course
+# deployment-course-iam
+# ...
 aws configure list --profile deployment-course-iam
 aws configure set region eu-central-1 --profile deployment-course-iam
 
 # Verify the actual identity before managing resources
 aws sts get-caller-identity --profile deployment-course-iam
-# IAM ARN: arn:aws:iam::<account-id>:user/deployment-course-admin
+# IAM ARN: arn:aws:iam::<account-id>:user/deployment-admin
 
 # First IAM exercise: list users (requires iam:ListUsers)
 aws iam list-users --profile deployment-course-iam
@@ -1046,37 +1045,131 @@ uv run python -c "import boto3; print(boto3.Session(profile_name='deployment-cou
 
 ![IAM AWS Credentials](./assets/iam_aws_credentials.png)
 
+Additional notes:
+
+- Standard files are discovered automatically:
+  - `~/.aws/credentials` for access keys
+  - and `~/.aws/config` for profile settings.
+  - SSO settings and cached tokens remain separate from the IAM key profile.
+  - `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE` are only needed to override these paths. Git Bash does not require `setx` or permanently exported access keys.
+- Avoid reusing the SSO profile name for `aws configure`: mixing static keys into it can cause the wrong identity to be selected. Keep SSO as your everyday profile.
 - **Profile precedence:** explicit CLI `--profile` selects the named profile over `AWS_PROFILE` and environment access keys. In Boto3, use `Session(profile_name=...)` to explicitly select profile credentials.
   - When relying only on `AWS_PROFILE`, environment access keys can take precedence; clear stale variables as above. Without an explicit profile or `AWS_PROFILE`, the default profile is used if no higher-priority credentials are present.
   - Bash equivalents: `export AWS_PROFILE=deployment-course` and `unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN`.
   - A browser SSO session does not automatically select a CLI profile. `.env` is loaded only if your Python application calls `load_dotenv()`; loading stale keys there can change Boto3's credential selection.
 - See [named profile configuration](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-profiles.html) and [Boto3 credential selection](https://docs.aws.amazon.com/boto3/latest/guide/credentials.html).
 
-#### Extra: IAM via AWS CLI
+#### S3 Management via AWS CLI
 
-List users, policies, etc.
-Add users, policies, etc.
-Remove users, policies, etc.
+- Use `aws s3` for convenient transfers/listing and `aws s3api` for individual S3 API (application programming interface) operations.
+- General-purpose bucket names must be unique across accounts and regions within an AWS partition. Replace the example suffix; choose the region containing your application.
+- New buckets are private, with Block Public Access enabled and ACLs (access control lists) disabled by default.
+  - The original course's `--acl bucket-owner-full-control` does **not** make a bucket public and is unnecessary with current ownership defaults; omit it.
+  - Prefer a temporary presigned URL for sharing. Public access requires a policy and compatible Block Public Access settings, not just an object URL.
+  - Otherwise, we can make an object public via the web UI too: select the object, choose "Object actions" > "Make public".
+- Supporting material: [`assets/sample.html`](./assets/sample.html). Save it locally if needed; the examples run from `01_ServerDeployment/`.
 
-#### Extra: S3 via AWS CLI
+```powershell
+# Replace this name with a unique lowercase name; use it consistently below
+$bucket = "mybucket-xyz-123-abc"
+$region = "eu-central-1"
 
-List S3 buckets, objects, etc.
-Add S3 buckets, objects, etc.
-Remove S3 buckets, objects, etc.
-Make an object public, and revoke public access.
+# Create a PRIVATE bucket; outside us-east-1, LocationConstraint must match the region
+aws s3api create-bucket --bucket $bucket --region $region --create-bucket-configuration "LocationConstraint=$region" --profile deployment-course-iam
+# For us-east-1 instead, omit --create-bucket-configuration entirely
 
-#### Extra: EC2 via AWS CLI
+# Upload: --key is the destination object name; --body is the local file path
+# --content-type sets the MIME (Multipurpose Internet Mail Extensions) media type
+aws s3api put-object --bucket $bucket --key sample.html --body assets/sample.html --content-type text/html --profile deployment-course-iam
 
-List EC2 instances, security groups, etc.
-Add and Start EC2 instances, security groups, etc.
-Stop and Remove EC2 instances, security groups, etc.
+# Verify in S3's web console, or list buckets and objects from the terminal
+aws s3 ls --profile deployment-course-iam
+aws s3 ls "s3://$bucket/" --recursive --profile deployment-course-iam
 
-#### Extra: RDS via AWS CLI
+# Download to a new local file
+aws s3 cp "s3://$bucket/sample.html" ./assets/sample-downloaded.html --profile deployment-course-iam
 
-List RDS instances, snapshots, security groups, etc.
-Add RDS instances, snapshots, security groups, etc.
-Remove RDS instances, snapshots, security groups, etc.
-Access to RDS instance via CLI.
+# Share a private object temporarily: open the printed URL in your browser
+# URL lifetime is at most 1 hour here, and cannot exceed the signing credentials' lifetime
+# Another option is in the web UI: select object - Object actions > Make public using ACL
+aws s3 presign "s3://$bucket/sample.html" --expires-in 3600 --region $region --profile deployment-course-iam
+# The generated URL will allow temporary access to the private object.
+```
+
+Clean up after the exercise:
+
+```powershell
+# A bucket must be empty before deletion; delete the uploaded object first
+aws s3api delete-object --bucket $bucket --key sample.html --profile deployment-course-iam
+aws s3api delete-bucket --bucket $bucket --region $region --profile deployment-course-iam
+
+# Confirm deletion in the S3 dashboard or list the remaining buckets
+aws s3 ls --profile deployment-course-iam
+# If versioning was enabled separately, also delete all versions and delete markers
+# before deleting the bucket; these examples assume a new unversioned lab bucket
+```
+
+References:
+
+- [create-bucket](https://docs.aws.amazon.com/cli/latest/reference/s3api/create-bucket.html)
+- [put-object](https://docs.aws.amazon.com/cli/latest/reference/s3api/put-object.html)
+- [S3 API commands](https://docs.aws.amazon.com/cli/latest/reference/s3api/index.html#available-commands).
+
+#### Extra: IAM Management via AWS CLI
+
+```powershell
+# List IAM users and customer-managed policies
+aws iam list-users --profile deployment-course-iam
+aws iam list-policies --scope Local --profile deployment-course-iam
+
+# Create an example user and grant read-only S3 access
+aws iam create-user --user-name example-user --profile deployment-course-iam
+aws iam attach-user-policy --user-name example-user --policy-arn arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess --profile deployment-course-iam
+
+# Remove the policy, then delete the example user (no keys/password were created)
+aws iam detach-user-policy --user-name example-user --policy-arn arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess --profile deployment-course-iam
+aws iam delete-user --user-name example-user --profile deployment-course-iam
+```
+
+#### Extra: EC2 Management via AWS CLI
+
+```powershell
+# List instances and security groups in Frankfurt
+aws ec2 describe-instances --region eu-central-1 --profile deployment-course-iam
+aws ec2 describe-security-groups --region eu-central-1 --profile deployment-course-iam
+
+# Launch one instance; replace dummy IDs with a compatible AMI, subnet, and security group
+aws ec2 run-instances --image-id ami-xxx --instance-type t3.micro --count 1 --key-name example-key --subnet-id subnet-xxx --security-group-ids sg-xxx --region eu-central-1 --profile deployment-course-iam
+
+# Stop, then start an instance; wait for each transition to finish before the next action
+aws ec2 stop-instances --instance-ids i-xxx --region eu-central-1 --profile deployment-course-iam
+aws ec2 start-instances --instance-ids i-xxx --region eu-central-1 --profile deployment-course-iam
+
+# Permanently terminate the example instance
+aws ec2 terminate-instances --instance-ids i-xxx --region eu-central-1 --profile deployment-course-iam
+```
+
+#### Extra: RDS Management via AWS CLI
+
+```powershell
+# List database instances and snapshots
+aws rds describe-db-instances --region eu-central-1 --profile deployment-course-iam
+aws rds describe-db-snapshots --region eu-central-1 --profile deployment-course-iam
+
+# Create private PostgreSQL; replace the subnet group and security group with existing ones
+# AWS Secrets Manager generates/stores the master password (additional charges apply)
+aws rds create-db-instance --db-instance-identifier example-db --engine postgres --db-instance-class db.t4g.micro --allocated-storage 20 --storage-type gp3 --db-name courseapp --master-username postgres --manage-master-user-password --db-subnet-group-name example-db-subnets --vpc-security-group-ids sg-xxx --no-publicly-accessible --no-multi-az --region eu-central-1 --profile deployment-course-iam
+
+# Wait until available, then retrieve its endpoint
+aws rds wait db-instance-available --db-instance-identifier example-db --region eu-central-1 --profile deployment-course-iam
+aws rds describe-db-instances --db-instance-identifier example-db --query "DBInstances[0].Endpoint.Address" --output text --region eu-central-1 --profile deployment-course-iam
+
+# Connect from EC2 in the VPC; use the password from Secrets Manager when prompted
+psql "host=example-db.abcdefghijkl.eu-central-1.rds.amazonaws.com port=5432 dbname=courseapp user=postgres sslmode=require" -W
+
+# Permanently delete the disposable database without a final snapshot or retained backups
+aws rds delete-db-instance --db-instance-identifier example-db --skip-final-snapshot --delete-automated-backups --region eu-central-1 --profile deployment-course-iam
+```
 
 ### Introduction to Kubernetes
 
