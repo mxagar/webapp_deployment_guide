@@ -38,13 +38,13 @@ Table of Contents:
     - [Introduction to Kubernetes and Project Overview](#introduction-to-kubernetes-and-project-overview)
     - [AWS Resources and Cost](#aws-resources-and-cost)
     - [AWS Setup](#aws-setup)
-    - [AWS CLI](#aws-cli)
     - [S3: Create a Bucket](#s3-create-a-bucket)
-      - [S3 via AWS CLI](#s3-via-aws-cli)
     - [Elastic Compute Cloud (EC2)](#elastic-compute-cloud-ec2)
-      - [EC2 via AWS CLI](#ec2-via-aws-cli)
     - [IAM Service](#iam-service)
     - [Extra: RDS](#extra-rds)
+    - [AWS CLI](#aws-cli)
+      - [S3 via AWS CLI](#s3-via-aws-cli)
+      - [EC2 via AWS CLI](#ec2-via-aws-cli)
       - [RDS via AWS CLI](#rds-via-aws-cli)
   - [Deployment Using CI/CD](#deployment-using-cicd)
   - [Project: Deploy Your Flask App to Kubernetes Using EKS](#project-deploy-your-flask-app-to-kubernetes-using-eks)
@@ -558,10 +558,6 @@ $env:AWS_PROFILE = "deployment-course"
 # Bash equivalent: export AWS_PROFILE=deployment-course
 ```
 
-### AWS CLI
-
-TBD.
-
 ### S3: Create a Bucket
 
 S3 = Simple Storage Service:
@@ -610,9 +606,6 @@ We can upload objects to the bucket:
 
 ![S3 Object Properties](./assets/s3_object_properties.png)
 
-#### S3 via AWS CLI
-
-TBD.
 
 ### Elastic Compute Cloud (EC2)
 
@@ -687,14 +680,50 @@ ssh -i "path/to/your/private-key.pem" ubuntu@<instance-public-ip>
 # Default user for Amazon Linux 2: ec2-user
 ```
 
-#### EC2 via AWS CLI
-
 ### IAM Service
 
-Elastic Compute Cloud = IAM
+Identity and Access Management = IAM:
 
-- a
-- b
+- **IAM** manages users, groups, roles, and permissions within an AWS account. **IAM Identity Center**, formerly AWS SSO (single sign-on), manages federated access to AWS accounts and applications.
+- **IAM user:** an identity recognized by AWS services, representing a person, system, or application.
+  - Can have a console password and long-term access keys for programmatic access.
+  - Permissions come from policies attached directly or through groups; an authorized user can assume different roles.
+- **IAM group:** a collection of IAM users with shared permissions. Attach or detach policies at group level to simplify access management.
+- **IAM role:** an identity with permissions policies and a trust policy specifying who may assume it.
+  - Authorized users, applications, or AWS services such as EC2 can assume a role.
+  - Has no permanent password or access keys; assuming it provides temporary credentials for AWS requests.
+  - Delegates access without sharing long-term keys. Prefer temporary role credentials for workloads and Identity Center access for people.
+- **IAM policy:** a JSON (JavaScript Object Notation) document defining permissions.
+  - `Effect`: whether a statement allows or denies access.
+  - `Action`: permitted or denied operations, such as `s3:GetObject`.
+  - `Resource`: resources to which the statement applies.
+  - `Condition`: optional restrictions on when the statement applies.
+  - AWS-managed policies are maintained by AWS; customer-managed policies are created and maintained in your account. A managed policy can be attached to multiple users, groups, or roles.
+  - Apply **least privilege**: grant only the required actions on the required resources.
+- **Validation:** use the [IAM policy simulator](https://policysim.aws.amazon.com/) to evaluate expected allowed and denied operations.
+- **Further reading:** [Example IAM identity-based policies](https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_examples.html), [IAM role versus IAM user discussion](https://stackoverflow.com/questions/46199680/difference-between-iam-role-and-iam-user-in-aws), and [AWS IAM FAQs](https://aws.amazon.com/iam/faqs/?nc=sn&loc=5).
+
+![IAM Policy](./assets/iam_policy.png)
+
+Example policy allowing all EC2 actions in `us-east-1`. EC2 (Elastic Compute Cloud) provides cloud virtual machines; the condition limits this statement's regional scope, and other applicable policies still affect effective permissions.
+
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Action": "ec2:*",
+            "Resource": "*",
+            "Effect": "Allow",
+            "Condition": {
+                "StringEquals": {
+                    "ec2:Region": "us-east-1"
+                }
+            }
+        }
+    ]
+}
+```
 
 Log in using AWS SSO:
 
@@ -703,18 +732,176 @@ https://<your-portal>.awsapps.com/start
 Account > AdministratorAccess > Open AWS Console
 ```
 
-Manage ... via the web UI (i.e., the AWS console):
+Manage IAM via the web UI (i.e., the AWS console):
 
-### Extra: RDS 
+- The video creates a customer-managed policy named `myFirstPolicy` for S3 (Simple Storage Service).
+- The visual editor groups actions into access levels such as List, Read, and Write. Expand a category to select individual operations; the final example selects only Read > GetObject.
+- The demo uses any bucket and any object because no bucket exists yet. This wildcard also matches future buckets/objects; for real use, restrict it to the intended bucket or object prefix.
+- Tags are optional key-value metadata for organizing resources. Reuse tag values across related resources; the demo skips tags and request conditions.
 
-RDS = Relational Database Service, i.e., PostgreSQL, MySQL, MariaDB, Oracle, or SQL Server managed by AWS
+```text
+AWS Console > Search: IAM > Dashboard
+  Review counts of user groups, users, roles, and policies
 
-- a
-- b
+Policies
+  Browse existing AWS-managed and customer-managed policies
+  Create policy > Visual editor
+    Effect: Allow
+    Service: S3
+    Actions:
+      Expand Read > select GetObject
+      Leave other List, Read, and Write actions unselected
+    Resources:
+      The editor supports all resources or specific resource ARNs
+      Demo: Specific > object > Add ARN > Any bucket + Any object
+        ARN (Amazon Resource Name): arn:aws:s3:::*/*
+      Preferred for a real bucket: arn:aws:s3:::<bucket-name>/*
+    Request conditions: leave unset for the demo
+  Next > Review and create
+    Name: myFirstPolicy
+    Description: Allow retrieving objects from any S3 bucket
+    Tags: optional; skip for the demo
+      Older console versions show a separate tags step
+    Review the summary:
+      Service: S3; access level: Read; action: GetObject
+      Resource scope: all matching objects; no request conditions
+  Create policy
+  Return to Policies > search/filter for myFirstPolicy
+
+Creating a policy alone does not grant access
+  Attach it to the intended user, group, or role to use its permissions
+```
+
+![IAM Create New Policy](./assets/iam_create_new_policy.png)
+
+![IAM Create New Policy 2](./assets/iam_create_new_policy_2.jpeg)
+
+![IAM Review Policy](./assets/iam_review_policy.jpeg)
+
+![IAM Review Policy 2](./assets/iam_review_policy_2.png)
+
+![IAM Review Policy JSON](./assets/iam_review_policy_json.png)
+
+Equivalent JSON for the video's final selection:
+
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": "s3:GetObject",
+            "Resource": "arn:aws:s3:::*/*"
+        }
+    ]
+}
+```
+
+This grants object retrieval, not bucket listing, uploads, or public access. Other applicable policies can still restrict access; the wildcard does not automatically grant access to other accounts' buckets.
+
+### Extra: RDS
+
+RDS = Relational Database Service:
+
+- Managed relational databases, including PostgreSQL, MySQL, MariaDB, Oracle, and SQL Server. AWS manages the infrastructure, backups, and maintenance; you manage schemas, queries, and database access.
+- For this lab, use **RDS for PostgreSQL**, a small **Single-AZ** instance, and minimal storage. Aurora PostgreSQL is a separate option and is unnecessary for this example.
+  - Amazon Aurora is AWS’s database engine for applications that need higher availability and scalability.
+- Costs include instance runtime, storage, and potentially backups and other features. Check the creation estimate and your account's credit/free-tier eligibility; do not assume the lab is free. See [RDS PostgreSQL pricing](https://aws.amazon.com/rds/postgresql/pricing/).
+
+Log in using AWS SSO:
+
+```text
+https://<your-portal>.awsapps.com/start
+Account > AdministratorAccess > Open AWS Console
+```
+
+Create PostgreSQL via the web UI (i.e., the AWS console):
+
+```text
+AWS Console > RDS > Databases > Create database
+  Region: eu-central-1 (or the same region as your EC2 application)
+  Creation method: Standard create
+  Engine: PostgreSQL (not Aurora)
+  Version: a currently supported version compatible with your application
+  Template: Dev/Test or Free tier, if offered and eligible
+  Availability: Single DB instance / Single-AZ
+  DB instance identifier: deployment-course-db
+  Credentials:
+    Master username: postgres
+    Self-managed password: generate a strong password and store it in your password manager
+    Alternative: manage credentials with AWS Secrets Manager (additional charges apply)
+  Instance class: Burstable > db.t4g.micro, if supported by your version/region
+  Storage: General Purpose SSD (gp3), 20 GiB
+    Disable storage autoscaling for this disposable lab to avoid unexpected growth
+  Connectivity:
+    VPC: same VPC (Virtual Private Cloud) as the EC2 application
+    DB subnet group: subnets in at least two Availability Zones, even for Single-AZ
+    Public access: No for an application running in the VPC
+    VPC security group: dedicated group, e.g., deployment-course-db-sg
+      Inbound: PostgreSQL / TCP 5432
+      Source: the EC2 application's security group (not 0.0.0.0/0)
+    Port: 5432
+  Additional configuration:
+    Initial database name: courseapp (otherwise connect to postgres first)
+    Automated backup retention: 1 day for the lab; choose appropriately for real data
+    Encryption: enabled
+    Review optional monitoring/paid features before enabling them
+    Deletion protection: disable only for this disposable exercise
+  Review estimated cost > Create database
+  Wait for status: Available
+```
+
+Connect to the database:
+
+- Under **Databases > deployment-course-db > Connectivity & security**, copy the **endpoint hostname** and port. Use the endpoint rather than a fixed IP address.
+- A private database is reachable from EC2 in the VPC, not directly from your laptop. SSH to EC2 first and run a PostgreSQL client there; install `postgresql-client` on Ubuntu if needed.
+- For a temporary direct laptop connection, public access requires suitable public subnets/routes and a security-group rule allowing **only your current public IP `/32`** on port 5432. Remove this access afterward.
+- SSO authenticates AWS management commands; it does not automatically authenticate SQL connections. Use database credentials here. Create a separate database user with limited permissions for your application.
+
+```bash
+# On an Ubuntu EC2 instance: install the PostgreSQL client if missing
+sudo apt-get update
+sudo apt-get install -y postgresql-client
+
+# Download the AWS RDS certificate bundle to verify the server's identity
+curl -o rds-global-bundle.pem https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
+
+# Replace the endpoint; -W prompts for the password without putting it in shell history
+psql "host=<rds-endpoint> port=5432 dbname=courseapp user=postgres sslmode=verify-full sslrootcert=rds-global-bundle.pem" -W
+
+# Inside psql: check the connection, list databases/tables, then exit
+\conninfo
+\l
+\dt
+\q
+```
+
+Clean up via the console:
+
+```text
+RDS > Databases > Select deployment-course-db > Actions
+  Stop temporarily: compute billing stops, but storage/backup charges remain
+    RDS automatically restarts a stopped instance after 7 days
+  Delete: permanently remove the disposable lab database
+    Disable deletion protection first if enabled
+    Final snapshot: keep for data you need; skip only for disposable data
+    Retain automated backups: disable if no recovery is needed
+    Acknowledge deletion and confirm
+  Check Snapshots / retained automated backups for separately billed leftovers
+  Remove the dedicated DB security group only when no resource uses it
+```
+
+See [connecting to RDS PostgreSQL](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_ConnectToPostgreSQLInstance.html) and [TLS certificate verification](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.SSL.html).
+
+### AWS CLI
+
+The [AWS CLI](https://aws.amazon.com/cli/) is a command-line tool that allows you to interact with AWS services directly from your terminal.
+
+#### S3 via AWS CLI
+
+#### EC2 via AWS CLI
 
 #### RDS via AWS CLI
-
-
 
 ## Deployment Using CI/CD
 
