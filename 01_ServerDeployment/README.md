@@ -53,7 +53,8 @@ Table of Contents:
     - [Kubernetes Concepts](#kubernetes-concepts)
     - [Kubernetes Components](#kubernetes-components)
     - [EKS: Amazon Elastic Kubernetes Service](#eks-amazon-elastic-kubernetes-service)
-  - [Deployment Using CI/CD](#deployment-using-cicd)
+  - [Deployment Using CI/CD: CloudFormation + CodeBuild + CodePipeline](#deployment-using-cicd-cloudformation--codebuild--codepipeline)
+  - [Extra: Deployment Using Terraform + Github Actions](#extra-deployment-using-terraform--github-actions)
   - [Project: Deploy Your Flask App to Kubernetes Using EKS](#project-deploy-your-flask-app-to-kubernetes-using-eks)
 
 ## Introduction
@@ -1179,7 +1180,11 @@ aws rds delete-db-instance --db-instance-identifier example-db --skip-final-snap
 
 ### EKS: Amazon Elastic Kubernetes Service
 
-## Deployment Using CI/CD
+## Deployment Using CI/CD: CloudFormation + CodeBuild + CodePipeline
+
+:construction:
+
+## Extra: Deployment Using Terraform + Github Actions
 
 :construction:
 
