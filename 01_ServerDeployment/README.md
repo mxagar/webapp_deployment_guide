@@ -931,7 +931,126 @@ aws --version
 
 #### Create an IAM User to Manage AWS Resources via CLI
 
+- The [SSO setup](#aws-cli-and-credentials) already provides programmatic access through `deployment-course`; creating an IAM user is optional for reproducing this course exercise.
+- An IAM user is separate from an Identity Center user, even if their names match. Creating one does not replace your SSO user, permission set, or local SSO profile.
+- The exercise attaches `AdministratorAccess`, granting broad administration permissions. Use only the permissions needed for actual applications; prefer SSO for everyday human access and roles for AWS workloads.
+- An **access key** consists of an **access key ID** (`AWS_ACCESS_KEY_ID`) and a **secret access** key (`AWS_SECRET_ACCESS_KEY`).
+  - IAM user keys are long-term credentials: they remain valid until deactivated or deleted. The secret is shown only at creation; copy it securely or download the CSV (comma-separated values) file.
+  - Keep keys and downloaded CSV files outside Git, e.g. in `.env`. Deactivate/delete unused keys after the exercise.
+  - A common third credential type is the **session token** (`AWS_SESSION_TOKEN`), used with temporary credentials. This is not necessary for long term IAM user keys.
+  - Note that in the course the triplet is provided (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`) and we need to introduce it to the `aws configure` command.
+
+![IAM New User](./assets/iam_new_users.png)
+
+![IAM New User Details](./assets/iam_new_user_details.png)
+
+![IAM New User Policies](./assets/iam_new_user_policies.png)
+
+![IAM User Keys](./assets/iam_user_keys.png)
+
+Log in using AWS SSO:
+
+```text
+https://<your-portal>.awsapps.com/start
+Account > AdministratorAccess > Open AWS Console
+```
+
+```text
+AWS Console: IAM > Users > Create user
+  User name: deployment-course-admin
+  Console access: leave disabled for this CLI-only exercise
+  Permissions: Attach policies directly > AdministratorAccess (course demonstration)
+    A group with the required policies is another way to manage permissions
+  Tags: optional
+  Review > Create user
+
+Users > deployment-course-admin > Security credentials > Access keys > Create access key
+  Use case: Command Line Interface (CLI)
+  Review the alternatives and acknowledge the recommendation if prompted
+  Description tag: optional
+  Create access key
+  Copy access key ID and secret access key, or download the CSV
+    Store securely; the secret cannot be retrieved again after leaving this page
+
+Older screenshots select "Programmatic access" during user creation
+  In the current console, create the user first, then create its access key separately
+```
+
 #### Configure AWS CLI
+
+- Use **AWS CLI v2** for both the SSO and IAM-key examples. Its installer includes Python; a separate Python installation is not required for CLI v2. The environment's PyPI `awscli` package is **CLI v1**, not an installation or upgrade of v2.
+- A **profile** is a named set of local settings, not an AWS user. Keep credentials separate:
+  - `deployment-course`: existing SSO profile; authenticate with `aws sso login`.
+  - `deployment-course-iam`: new IAM user's access keys; configure with `aws configure`.
+  - `deployment-course-classroom`: optional temporary classroom credentials, including the session token.
+- Configure the access key ID, secret access key, default region, and output format. CLI v2 supports `json`, `yaml`, `yaml-stream`, `text`, and `table`.
+  - The video uses `us-east-2`; this guide uses `eu-central-1`. Choose the region containing your resources; the video's historical Kubernetes issue in `us-east-1` is not a general restriction.
+- Standard files are discovered automatically: `~/.aws/credentials` for access keys and `~/.aws/config` for profile settings. SSO settings and cached tokens remain separate from the IAM key profile.
+  - On Windows, `~` is your user directory. WSL (Windows Subsystem for Linux) has its own Linux home and configuration files.
+  - `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE` are only needed to override these paths. Git Bash does not require `setx` or permanently exported access keys.
+- Avoid reusing the SSO profile name for `aws configure`: mixing static keys into it can cause the wrong identity to be selected. Keep SSO as your everyday profile.
+
+```powershell
+# Verify CLI v2; activation of .venv may put the PyPI CLI v1 first on PATH
+# $env:PATH = "C:\Program Files\Amazon\AWSCLIV2;" + $env:PATH
+aws --version
+# Expected prefix: aws-cli/2
+
+# One-time IAM profile setup; creates/updates this local profile only
+aws configure --profile deployment-course-iam
+# AWS Access Key ID: paste the new IAM user's access key ID: AWS_ACCESS_KEY_ID
+# AWS Secret Access Key: paste its secret access key: AWS_SECRET_ACCESS_KEY
+# Default region name: eu-central-1
+# Default output format: json
+
+# Long-term IAM keys do NOT use a session token
+# A fresh IAM profile needs no token. If reusing an old profile, remove its
+# aws_session_token line from ~/.aws/credentials; do not set it to the string "null"
+
+# Optional alternative: configure classroom credentials in their own profile
+# aws configure --profile deployment-course-classroom
+# aws configure set aws_session_token (Read-Host "Classroom session token") --profile deployment-course-classroom
+# Refresh the access key ID, secret, AND token together when they expire
+
+# Inspect profile names and masked configuration; update an individual setting
+aws configure list-profiles
+aws configure list --profile deployment-course-iam
+aws configure set region eu-central-1 --profile deployment-course-iam
+
+# Verify the actual identity before managing resources
+aws sts get-caller-identity --profile deployment-course-iam
+# IAM ARN: arn:aws:iam::<account-id>:user/deployment-course-admin
+
+# First IAM exercise: list users (requires iam:ListUsers)
+aws iam list-users --profile deployment-course-iam
+# Output contains Users with Path, UserName, UserId, Arn, and CreateDate
+
+# Explicit profile selection also works for Boto3
+uv run python -c "import boto3; print(boto3.Session(profile_name='deployment-course-iam').client('sts').get_caller_identity()['Arn'])"
+
+# Clear credentials inherited from other tools in THIS terminal before switching
+# This does not delete credentials stored in ~/.aws/credentials
+Remove-Item Env:AWS_ACCESS_KEY_ID, Env:AWS_SECRET_ACCESS_KEY, Env:AWS_SESSION_TOKEN, Env:AWS_SECURITY_TOKEN -ErrorAction SilentlyContinue
+
+# Select IAM credentials for commands without --profile, if needed
+$env:AWS_PROFILE = "deployment-course-iam"
+aws sts get-caller-identity
+
+# Return to the existing SSO profile for everyday work
+aws sso login --profile deployment-course
+$env:AWS_PROFILE = "deployment-course"
+aws sts get-caller-identity
+# SSO ARN: arn:aws:sts::<account-id>:assumed-role/AWSReservedSSO_AdministratorAccess_.../<session-name>
+uv run python -c "import boto3; print(boto3.Session(profile_name='deployment-course').client('sts').get_caller_identity()['Arn'])"
+```
+
+![IAM AWS Credentials](./assets/iam_aws_credentials.png)
+
+- **Profile precedence:** explicit CLI `--profile` selects the named profile over `AWS_PROFILE` and environment access keys. In Boto3, use `Session(profile_name=...)` to explicitly select profile credentials.
+  - When relying only on `AWS_PROFILE`, environment access keys can take precedence; clear stale variables as above. Without an explicit profile or `AWS_PROFILE`, the default profile is used if no higher-priority credentials are present.
+  - Bash equivalents: `export AWS_PROFILE=deployment-course` and `unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN`.
+  - A browser SSO session does not automatically select a CLI profile. `.env` is loaded only if your Python application calls `load_dotenv()`; loading stale keys there can change Boto3's credential selection.
+- See [named profile configuration](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-profiles.html) and [Boto3 credential selection](https://docs.aws.amazon.com/boto3/latest/guide/credentials.html).
 
 #### Extra: IAM via AWS CLI
 
