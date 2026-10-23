@@ -54,6 +54,10 @@ Table of Contents:
     - [Kubernetes Components](#kubernetes-components)
     - [EKS: Amazon Elastic Kubernetes Service](#eks-amazon-elastic-kubernetes-service)
     - [Creating an EKS Cluster via Web Console](#creating-an-eks-cluster-via-web-console)
+      - [Part 1: Prerequisites](#part-1-prerequisites)
+      - [Part 2: Create the EKS Cluster](#part-2-create-the-eks-cluster)
+      - [Part 3: Create a Node Group](#part-3-create-a-node-group)
+      - [Part 4: Clean Up](#part-4-clean-up)
     - [eksctl](#eksctl)
     - [kubectl](#kubectl)
     - [Creating Kubernetes Resources with kubectl](#creating-kubernetes-resources-with-kubectl)
@@ -1248,6 +1252,232 @@ References: [Kubernetes components](https://kubernetes.io/docs/concepts/overview
 - Further reading: [What is Amazon EKS?](https://docs.aws.amazon.com/eks/latest/userguide/what-is-eks.html).
 
 ### Creating an EKS Cluster via Web Console
+
+- This walkthrough creates an Amazon EKS cluster and a managed node group with two worker nodes.
+- An EKS cluster has two main parts:
+  - The **control plane** is the Kubernetes management layer. It includes the API server and etcd, the database that stores cluster state, and AWS runs it in AWS-managed accounts.
+  - The **data plane** consists of worker machines that run application containers in Kubernetes Pods. In this exercise, the workers are EC2 instances in your AWS account.
+- The control plane schedules Pods and manages worker nodes.
+  - A Pod is Kubernetes’ smallest deployable unit and can contain one or more related containers.
+  - Each worker node runs a kubelet agent, which keeps the node and its Pods in the expected state.
+  - Each worker node also runs kube-proxy, which helps implement network communication for Kubernetes Services.
+  - A container runtime runs containers. Current Kubernetes nodes use a CRI-compatible runtime such as containerd; Docker Engine is no longer directly integrated through Kubernetes’ removed dockershim.
+- Creating a cluster and deploying an application are separate tasks. This section creates the cluster, and a later course section deploys a sample Flask application.
+- EKS can be created through the AWS web console or AWS CLI. This walkthrough uses the console, and later sections use the CLI.
+- The prerequisites are a VPC and subnets, an IAM role for the EKS control plane, and an IAM role for the worker nodes.
+  - An SSH key pair is optional and can provide access to an EC2 node for troubleshooting or inspecting logs.
+  - A **VPC** is an isolated virtual network in AWS.
+  - A **subnet** is an address range within one Availability Zone (AZ), which is a separate physical location within an AWS Region.
+  - EKS requires cluster subnets in at least two AZs.
+
+#### Part 1: Prerequisites
+
+**Video walkthrough**
+
+- First, check whether your account has a default VPC.
+  - In the VPC console, open **Subnets** and confirm that at least one subnet belongs to the default VPC.
+- Create two IAM roles under **IAM -> Roles**.
+  - An IAM role is a set of permissions temporarily assumed by a trusted service or resource.
+  - Its trust policy says who can assume it, while its permission policies say what it can do.
+- Create the cluster role.
+  - Choose **AWS service** as the trusted entity and **EKS -> EKS - Cluster** as the use case.
+  - The AmazonEKSClusterPolicy is selected automatically and grants EKS permissions needed to manage cluster-related AWS resources.
+  - Give the role a meaningful name such as **myEKSClusterRole**, review the trusted entity and policy, and create it.
+- Create the worker-node role.
+  - Choose the **EC2** use case.
+  - The recording says some policies are attached automatically, then adds the worker-node policy, the EC2 container registry read-only policy, and the EKS CNI policy.
+  - Name the role **myEKSWorkerNodeRole**. Its trusted entity is EC2, and its permissions let worker instances and the kubelet call required AWS APIs.
+  - Ignore tags and create the role.
+  - The transcript says “fee policies”; this appears to refer to the policies attached for the EC2 use case.
+- Optionally create an SSH key pair in the same Region as the EC2 instances.
+  - The recording starts in **us-east-1** and then switches to **us-east-2**, so ensure the selected Region matches where you will create the cluster and nodes.
+  - Leave the key type at its default, use **.pem** for Linux or **.ppk** for Windows, and create the key pair.
+  - The recording notes that the key may not be needed immediately.
+
+**Default VPC and subnets**
+
+- In the VPC console, check whether a default VPC is already set up.
+- If there is no default VPC, follow [AWS’s instructions for creating a default VPC](https://docs.aws.amazon.com/vpc/latest/userguide/default-vpc.html#create-default-vpc).
+- A default VPC typically has a **/16** IPv4 CIDR block, which provides up to 65,536 addresses.
+- It also has a **/20** subnet in each AZ, route tables, and an internet gateway.
+- CIDR notation describes an IP address range, and the smaller the number after the slash, the larger the range.
+
+![Default VPC](./assets/default_vpc.png)
+
+**Cluster IAM role**
+
+- In **IAM -> Roles**, create the role that the EKS control plane will assume to manage AWS resources for the cluster.
+- Choose **AWS service** as the trusted entity, search for EKS, and select **EKS - Cluster**.
+- The AmazonEKSClusterPolicy should be selected automatically.
+- Name the role **myEKSClusterRole** or another meaningful name, then create it.
+
+![Trusted Entity for EKS](./assets/trusted_entity_eks.jpeg)
+
+![Role Details for EKS](./assets/role_details_eks.jpeg)
+
+- In this example, EKS is the trusted entity, so the role trusts the EKS service to assume it.
+- The attached policy defines the AWS actions that the role permits.
+
+![Policies for EKS Role](./assets/policies_role_ekas.jpeg)
+
+**Worker-node IAM role**
+
+- Create another role, such as **myEKSWorkerNodeRole**, with **EC2** as the trusted entity and use case.
+- The [kubelet](https://kubernetes.io/docs/reference/command-line-tools-reference/kubelet/#synopsis) running on each worker node uses this role to call AWS APIs.
+- Attach these policies for the configuration shown in the recording:
+  - **AmazonEKSWorkerNodePolicy**
+  - **AmazonEC2ContainerRegistryReadOnly**
+  - **AmazonEKS_CNI_Policy**
+- Finish creating the role, using AWS’s [worker-node role instructions](https://docs.aws.amazon.com/eks/latest/userguide/create-node-role.html#create-worker-node-role) if needed.
+- AWS now recommends using **AmazonEC2ContainerRegistryPullOnly** for image pulls and assigning VPC CNI permissions to the **aws-node** add-on’s service account role where possible.
+- The three policies above are retained to match this course walkthrough, but review current AWS guidance for a new cluster.
+
+![Trusted Entity for Worker Nodes](./assets/trusted_entity_eks_2.jpeg)
+
+- Attach the worker-node permission policies to **myEKSWorkerNodeRole**.
+
+![Roles for EKS](./assets/roles_eks.jpeg)
+
+- *These are the roles needed for this EKS exercise.*
+
+**Optional SSH key pair**
+
+- AWS creates a public/private key pair for logging in to an EC2 instance.
+  - AWS places the public key on the instance.
+  - Keep the private key and use it to authenticate instead of a password.
+- In **EC2 -> Network & Security -> Key Pairs**, choose **Create key pair**.
+- Enter a name and choose **.pem** for a typical Linux SSH client or **.ppk** for a Windows PuTTY client.
+- Leave the remaining fields at their defaults.
+- AWS downloads the private key to your computer, so keep it private and secure.
+
+![SSH Key Pair for EKS](./assets/ssh_key_pair_eks.jpeg)
+
+#### Part 2: Create the EKS Cluster
+
+**Video walkthrough**
+
+- Open Amazon Elastic Kubernetes Service and go to the cluster dashboard.
+- The recording deletes an existing cluster before creating a new one.
+- Enter a name such as **my EKS cluster**, keep the default Kubernetes version, and note the version.
+- Select the cluster IAM role created in the prerequisites.
+- For networking, the console has selected the default VPC and three subnets in **us-east-2a**, **us-east-2b**, and **us-east-2c**.
+- Choose the default security group and leave the other settings at their defaults.
+- On the review page, the recording shows Kubernetes **1.21**, no tags, and the default VPC and subnets.
+- Cluster creation takes several minutes; the recording estimates about 5–10 minutes.
+
+- The control plane runs in AWS-managed accounts, while worker nodes run in your account.
+- Once the control plane is ready, attach worker nodes to run Pods.
+
+**Cluster configuration**
+
+- In **EKS -> Clusters**, choose **Add cluster** or **Create cluster**.
+- Enter a name such as **myEKSCluster**, select a Kubernetes version offered in the console, and choose the cluster IAM role created above.
+- The recording uses the default Kubernetes version and leaves the other settings unchanged.
+- Kubernetes **1.21** is the historical version shown in the video, so choose a currently supported version for a new cluster.
+
+![EKS Cluster Configuration](./assets/eks_cluster_configuration.png)
+
+**Networking**
+
+- Choose the VPC, subnets, and security group.
+  - A security group is a virtual firewall that controls allowed inbound and outbound connections.
+  - Make the cluster API endpoint publicly accessible as shown in the tutorial.
+  - Public access to the API endpoint controls access to the Kubernetes management API; it does not by itself make your application or Pods public.
+- EKS requires cluster subnets in at least two AZs.
+- The recording’s region and AZ names differ: it mentions **us-east-2a/b/c** in the walkthrough and **us-east-1e** in the written steps.
+  - Use subnets belonging to your selected Region and account.
+  - If EKS reports insufficient capacity in an AZ, retry with at least two subnets in AZs that AWS reports as available.
+  - The written tutorial’s example removes the **us-east-1e** subnet.
+
+![EKS Networking Configuration](./assets/eks_networking.png)
+
+- The tutorial describes an error saying the requested AZ does not have enough capacity.
+- In that case, return to networking and remove the affected subnet, which the example identifies as **us-east-1e**, while retaining subnets in at least two AZs.
+
+**Logging**
+
+- Accept the default logging settings and create the cluster.
+- Wait several minutes for the cluster to become active.
+
+#### Part 3: Create a Node Group
+
+- A **node group** is a set of worker machines used to run Pods.
+- This walkthrough creates a managed node group of two EC2 instances.
+
+**Video walkthrough**
+
+- When the node group is active, the cluster details show two nodes, corresponding to two running EC2 instances.
+- Confirm that both EC2 instances are running in the EC2 dashboard.
+- In the EKS cluster’s **Resources** view, inspect the workloads Kubernetes has created.
+  - These include DaemonSets, Deployments, ReplicaSets, and Pods.
+  - These are cluster/system workloads, not the course’s user application.
+- The recording explains why the course moves to command-line tools.
+  - The console is cumbersome for repeatedly managing a cluster in this classroom.
+  - There is not yet a user application to deploy, communicate with through Pods, or inspect through deployment logs.
+  - The next lessons create a cluster with one **eksctl** command and use **kubectl** to communicate with it and deploy an application.
+- To remove this console-created cluster, delete its node group first and then delete the cluster.
+
+**Open the node-group wizard**
+
+- When the cluster shows **Active**, select its name to view the details.
+
+![Active Cluster](./assets/active_cluster.png)
+
+- In **Configuration -> Compute**, choose **Add Node Group**.
+
+![Node Group](./assets/node_group.png)
+
+**Node-group configuration**
+
+- Enter a node-group name and attach the **myEKSWorkerNodeRole** IAM role.
+- Leave the other fields in this section at their defaults.
+- This role gives the kubelet permission to make required AWS API calls.
+
+![Node Group Configuration](./assets/node_group_configuration.png)
+
+**Compute and scaling**
+
+- Select the operating system (AMI), instance hardware, storage, and number of worker nodes.
+- The following values are the course’s historical examples, not current recommendations:
+  - The AMI type is Amazon Linux 2 (**AL2_x86_64**). EKS stopped publishing EKS-optimized AL2 AMIs on November 26, 2025, so use a currently supported AMI such as AL2023 or Bottlerocket for a new cluster.
+  - The capacity type is **On-Demand**, which charges for EC2 capacity as it runs. See [EC2 instance purchasing options](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/instance-purchasing-options.html).
+  - The instance type is **t3.micro**, listed in the recording as having 2 vCPUs and 1 GiB of memory. This is a very small example and may not have enough capacity for useful workloads.
+  - The disk size is **20 GiB** for each worker node.
+  - The minimum node-group size is **2**, which is the lower bound when scaling in.
+  - The maximum node-group size is **2**, which is the upper bound when scaling out.
+  - The desired size is **2**, which is the target node count.
+- With minimum, maximum, and desired all set to 2, the group is configured for two nodes.
+- Changing these values sets the allowed node range and target, while scaling workloads also requires suitable autoscaling configuration.
+
+![Node Group Configuration](./assets/node_group_configuration_2.png)
+
+**Networking and SSH**
+
+- Choose the subnets selected when creating the cluster.
+- Select the optional SSH key pair from the prerequisites if you need remote instance access.
+- The original tutorial says to allow remote access from anywhere on the Internet.
+- For a real cluster, restrict SSH to your own public IP address, usually a **/32** CIDR range, or leave remote SSH disabled if you do not need it.
+
+![Node Group Networking](./assets/node_group_networking.png)
+
+- Review the settings and finish creating the node group.
+- For an overview of Kubernetes components, see the [Kubernetes components documentation](https://kubernetes.io/docs/concepts/overview/components/).
+
+![Cluster Node Group](./assets/cluster_node_group.png)
+
+![Cluster Node Group](./assets/cluster_node_group_2.png)
+
+![Worker Nodes](./assets/worker_nodes.png)
+
+![EKS Cluster Components](./assets/eks_cluster_components.png)
+
+#### Part 4: Clean Up
+
+- Delete the node group first. See AWS’s [managed node-group deletion instructions](https://docs.aws.amazon.com/eks/latest/userguide/delete-managed-node-group.html).
+- Then delete the cluster. See AWS’s [cluster deletion instructions](https://docs.aws.amazon.com/eks/latest/userguide/delete-cluster.html).
+- Delete the custom IAM roles created for this exercise after the cluster and node group are gone.
+- You have created a Kubernetes cluster using the web console.
+- The following sections use eksctl and the AWS CLI to create an EKS cluster.
 
 ### eksctl
 
