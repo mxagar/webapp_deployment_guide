@@ -212,3 +212,4 @@ __marimo__/
 .vscode
 .DS_Store
 *.cer
+*.pem
