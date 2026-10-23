@@ -58,9 +58,9 @@ Table of Contents:
       - [Part 2: Create the EKS Cluster](#part-2-create-the-eks-cluster)
       - [Part 3: Create a Node Group](#part-3-create-a-node-group)
       - [Part 4: Clean Up](#part-4-clean-up)
-    - [eksctl](#eksctl)
-    - [kubectl](#kubectl)
-    - [Creating Kubernetes Resources with kubectl](#creating-kubernetes-resources-with-kubectl)
+    - [Installing eksctl](#installing-eksctl)
+    - [Installing kubectl](#installing-kubectl)
+    - [Creating an EKS Cluster via eksctl and AWS CLI](#creating-an-eks-cluster-via-eksctl-and-aws-cli)
   - [Deployment Using CI/CD: CloudFormation + CodeBuild + CodePipeline](#deployment-using-cicd-cloudformation--codebuild--codepipeline)
   - [Extra: Deployment Using Terraform + Github Actions](#extra-deployment-using-terraform--github-actions)
   - [Project: Deploy Your Flask App to Kubernetes Using EKS](#project-deploy-your-flask-app-to-kubernetes-using-eks)
@@ -1471,15 +1471,170 @@ Notes:
   - See AWS's [managed node-group deletion instructions](https://docs.aws.amazon.com/eks/latest/userguide/delete-managed-node-group.html).
 - Then delete the cluster.
   - See AWS's [cluster deletion instructions](https://docs.aws.amazon.com/eks/latest/userguide/delete-cluster.html).
-- Delete the custom IAM roles created for this exercise after the cluster and node group are gone.
+- Deleting the custom IAM roles is optional; IAM itself has no charge, and removing the roles is not required to delete the cluster.
+  - Keep a role if you plan to reuse it or want to retain it for learning, but remember that its permissions remain available to trusted entities that can assume it.
+  - If a role was created only for this exercise and is no longer needed, first confirm that no other cluster or resource uses it, then delete it as cleanup.
 - You have created a Kubernetes cluster using the web UI console.
-- The following sections use eksctl and the AWS CLI to create an EKS cluster.
+- The following sections use `eksctl` and the AWS CLI to create an EKS cluster.
 
-### eksctl
+### Installing eksctl
 
-### kubectl
+- **eksctl** is the official command-line tool for creating and managing Amazon EKS clusters.
+- The course recording credits Amazon and Weaveworks with creating the tool; eksctl is now an open-source project.
+- eksctl uses AWS CloudFormation to provision the AWS resources that make up a cluster.
+  - CloudFormation creates and manages AWS resources from a YAML or JSON template.
+  - For a basic cluster, eksctl generates the template, so you do not need to write it yourself.
+  - For a cluster with custom requirements, you can write a YAML configuration file and pass it to eksctl.
+- A basic EKS cluster can include a VPC, subnets, worker-node groups, node machine images (AMIs), EC2 instance types, and a Kubernetes API endpoint.
+  - A VPC is an isolated virtual network with an IP address range.
+  - A subnet is a smaller IP range inside a VPC, assigned to one Availability Zone.
+  - A node group is a group of worker machines (EC2 instances).
+  - The AMI defines the node operating system, and the instance type defines its hardware capacity.
+  - The Kubernetes API endpoint is the address used by tools such as kubectl to communicate with the cluster control plane.
 
-### Creating Kubernetes Resources with kubectl
+#### Prerequisites and AWS credentials
+
+- Install and configure AWS CLI before using eksctl. The AWS credentials and Region that work for AWS CLI are also used by eksctl.
+- If you use an IAM Identity Center (SSO) profile, sign in and select the profile in PowerShell. Replace **deployment-course** with your own profile name.
+
+  ```powershell
+  aws sso login --profile deployment-course
+  $env:AWS_PROFILE = "deployment-course"
+  aws sts get-caller-identity
+  ```
+
+- Setting **AWS_PROFILE** selects that profile for the current PowerShell session. Open a new session or set it again when needed.
+- The selected AWS role needs permission to create the EKS, EC2, CloudFormation, and IAM resources required by the cluster.
+- eksctl also needs an AWS IAM Authenticator command available in your PATH. Use **aws-iam-authenticator** or **aws eks get-token** from AWS CLI v2.
+- Follow the [official AWS eksctl installation instructions](https://docs.aws.amazon.com/eks/latest/eksctl/installation.html). AWS recommends downloading official releases; third-party package managers are not maintained or supported by AWS.
+
+#### Install on Windows with PowerShell
+
+- Download the official release archive for your computer architecture.
+  - Choose [AMD64/x86_64](https://github.com/eksctl-io/eksctl/releases/latest/download/eksctl_Windows_amd64.zip) for most Windows PCs.
+  - Choose [ARM64](https://github.com/eksctl-io/eksctl/releases/latest/download/eksctl_Windows_arm64.zip) for Windows on ARM.
+- Extract the archive to a folder in your PATH. The following example uses **%USERPROFILE%\bin** and adds it to your user PATH.
+
+  ```powershell
+  $arch = "amd64" # Change to "arm64" for Windows on ARM.
+  $installDir = Join-Path $env:USERPROFILE "bin"
+  $zip = Join-Path $env:TEMP "eksctl_Windows_$arch.zip"
+  $url = "https://github.com/eksctl-io/eksctl/releases/latest/download/eksctl_Windows_$arch.zip"
+
+  New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+  Invoke-WebRequest -Uri $url -OutFile $zip
+  Expand-Archive -LiteralPath $zip -DestinationPath $installDir -Force
+
+  $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+  if (($userPath -split ";") -notcontains $installDir) {
+      $newPath = if ($userPath) { "$userPath;$installDir" } else { $installDir }
+      [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+  }
+  ```
+
+- Optionally download the release checksum list and verify that the ZIP archive matches the official checksum. A result of **True** means the hashes match.
+
+  ```powershell
+  $checksums = Join-Path $env:TEMP "eksctl_checksums.txt"
+  Invoke-WebRequest -Uri "https://github.com/eksctl-io/eksctl/releases/latest/download/eksctl_checksums.txt" -OutFile $checksums
+  (Get-FileHash -Algorithm SHA256 $zip).Hash -eq ((Get-Content $checksums) -match "eksctl_Windows_$arch.zip" -split " ")[0]
+  ```
+
+- Close and reopen PowerShell so it loads the updated PATH, then verify the installation.
+
+  ```powershell
+  eksctl version
+  Get-Command eksctl
+  ```
+
+#### Install on Linux
+
+- Download the current Linux release, optionally verify its checksum, then install eksctl in **/usr/local/bin**.
+
+  ```bash
+  # Use arm64 instead of amd64 on ARM64 systems.
+  ARCH=amd64
+  PLATFORM="$(uname -s)_$ARCH"
+
+  curl -sLO "https://github.com/eksctl-io/eksctl/releases/latest/download/eksctl_$PLATFORM.tar.gz"
+
+  # Optional: verify the archive checksum.
+  curl -sL "https://github.com/eksctl-io/eksctl/releases/latest/download/eksctl_checksums.txt" \
+    | grep "$PLATFORM" | sha256sum --check
+
+  tar -xzf "eksctl_$PLATFORM.tar.gz" -C /tmp
+  sudo install -m 0755 /tmp/eksctl /usr/local/bin
+  rm "eksctl_$PLATFORM.tar.gz" /tmp/eksctl
+  ```
+
+#### Install on macOS with Homebrew
+
+- If Homebrew is not installed, follow the instructions at [brew.sh](https://brew.sh/).
+- Use AWS’s current Homebrew tap to install eksctl.
+
+  ```bash
+  brew --version
+  brew tap aws/tap
+  brew install aws/tap/eksctl
+  ```
+
+- If Homebrew reports a permissions or ownership problem, follow its troubleshooting instructions for the specific path instead of recursively changing ownership of a broad system directory.
+
+#### Create a basic cluster
+
+- After installing eksctl and configuring AWS credentials, create a basic cluster with one command.
+
+  ```bash
+  eksctl create cluster
+  ```
+
+- By default, eksctl uses the AWS CLI's configured Region and creates the following:
+  - A cluster with an automatically generated name.
+  - One managed node group containing two **m5.large** worker nodes.
+  - The official Amazon EKS machine image for the nodes.
+  - A dedicated VPC and the network resources needed by the cluster.
+- The **m5.large** instance type has 2 vCPUs, 8 GiB of memory, and up to 10 Gbps network bandwidth. See [EC2 instance types](https://aws.amazon.com/ec2/instance-types/).
+- Cluster creation provisions AWS resources that incur charges while they exist, so choose the Region deliberately and delete the cluster after practice.
+- You can specify the cluster name and node count explicitly.
+
+  ```bash
+  eksctl create cluster --name myCluster --nodes 4
+  ```
+
+#### Create a cluster from a YAML configuration
+
+- A YAML configuration file lets you specify detailed cluster settings without putting every option in the command line.
+- This section does not cover configuration files in detail. See the [eksctl documentation and examples](https://eksctl.io/).
+
+  ```bash
+  eksctl create cluster --config-file cluster.yaml
+  ```
+
+#### List and delete clusters
+
+- List clusters in the Region configured for the active AWS profile.
+
+  ```bash
+  eksctl get cluster
+  ```
+
+- Get information about a named cluster in a specified Region.
+
+  ```bash
+  eksctl get cluster --name myCluster --region eu-central-1
+  ```
+
+- Delete an eksctl-created cluster when you no longer need it. Review and remove any additional resources you created separately.
+
+  ```bash
+  eksctl delete cluster --name myCluster --region eu-central-1
+  ```
+
+- eksctl has additional options, including minimum and maximum node-group sizes and SSH access to nodes. Autoscaling requires suitable autoscaling components and configuration.
+
+### Installing kubectl
+
+### Creating an EKS Cluster via eksctl and AWS CLI
 
 ## Deployment Using CI/CD: CloudFormation + CodeBuild + CodePipeline
 
