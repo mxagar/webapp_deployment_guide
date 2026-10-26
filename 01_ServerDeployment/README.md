@@ -86,6 +86,18 @@ Table of Contents:
       - [Understanding the Deployment YAML](#understanding-the-deployment-yaml)
       - [Access the application](#access-the-application)
       - [Troubleshoot and clean up](#troubleshoot-and-clean-up)
+    - [CloudFormation: Introduction](#cloudformation-introduction)
+    - [CloudFormation: Template Sections](#cloudformation-template-sections)
+    - [CloudFormation Exercise 1: VPC](#cloudformation-exercise-1-vpc)
+    - [CloudFormation Exercise 2: EC2](#cloudformation-exercise-2-ec2)
+    - [CloudFormation: S3 (Extra)](#cloudformation-s3-extra)
+    - [CloudFormation: Dependencies, Conditions, Mappings (Extra)](#cloudformation-dependencies-conditions-mappings-extra)
+    - [CodePipeline](#codepipeline)
+    - [CodeBuild](#codebuild)
+    - [CloudFormation Exercise 3: Pipeline](#cloudformation-exercise-3-pipeline)
+    - [Final Pipeline: IAM Role for CodeBuild](#final-pipeline-iam-role-for-codebuild)
+    - [Final Pipeline: Authorize CodeBuild Using EKS RBAC](#final-pipeline-authorize-codebuild-using-eks-rbac)
+    - [Final Pipeline: Deploy to EKS Cluster](#final-pipeline-deploy-to-eks-cluster)
   - [Project: Deploy Your Flask App to Kubernetes Using EKS](#project-deploy-your-flask-app-to-kubernetes-using-eks)
 
 ## Introduction
@@ -2130,6 +2142,29 @@ For the authoritative field definitions, see the Kubernetes documentation for [D
   eksctl delete cluster --name eksctl-demo --region eu-central-1 --wait --profile=deployment-course
   ```
 
+### CloudFormation: Introduction
+
+### CloudFormation: Template Sections
+
+### CloudFormation Exercise 1: VPC
+
+### CloudFormation Exercise 2: EC2
+
+### CloudFormation: S3 (Extra)
+
+### CloudFormation: Dependencies, Conditions, Mappings (Extra)
+
+### CodePipeline
+
+### CodeBuild
+
+### CloudFormation Exercise 3: Pipeline
+
+### Final Pipeline: IAM Role for CodeBuild
+
+### Final Pipeline: Authorize CodeBuild Using EKS RBAC
+
+### Final Pipeline: Deploy to EKS Cluster
 
 ## Project: Deploy Your Flask App to Kubernetes Using EKS
 
