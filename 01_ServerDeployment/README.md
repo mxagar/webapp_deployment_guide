@@ -83,6 +83,7 @@ Table of Contents:
       - [Prepare the Docker Hub repository and exercise files](#prepare-the-docker-hub-repository-and-exercise-files)
       - [Build and publish the image](#build-and-publish-the-image)
       - [Configure and apply the Kubernetes Deployment](#configure-and-apply-the-kubernetes-deployment)
+      - [Understanding the Deployment YAML](#understanding-the-deployment-yaml)
       - [Access the application](#access-the-application)
       - [Troubleshoot and clean up](#troubleshoot-and-clean-up)
   - [Project: Deploy Your Flask App to Kubernetes Using EKS](#project-deploy-your-flask-app-to-kubernetes-using-eks)
@@ -1903,7 +1904,7 @@ Notes:
 - EKS clusters, EC2 worker nodes, storage, and networking resources can incur charges while they exist. Delete the test cluster when you no longer need it; the wait option makes eksctl wait for deletion to complete and report errors.
 
   ```bash
-  eksctl delete cluster --name eksctl-demo --region eu-central-1 --wait
+  eksctl delete cluster --name eksctl-demo --region eu-central-1 --wait --profile=deployment-course
   ```
 
 - eksctl removes resources it manages for this cluster. Check the AWS console afterward for resources you created separately or attached to the cluster, since those may need separate cleanup.
@@ -1961,7 +1962,7 @@ This section uses the repository [cd0157-Server-Deployment-and-Containerization]
 - If the local image has a different name, retag it before pushing:
 
   ```powershell
-  docker tag SOURCE_IMAGE:TAG <username>/simple-flask:v1
+  docker tag <local-image-name>:<tag-name> <username>/simple-flask:v1
   ```
 
 - Confirm that Docker Hub shows the **v1** tag before deploying it.
@@ -1986,17 +1987,20 @@ This section uses the repository [cd0157-Server-Deployment-and-Containerization]
   aws sso login --profile deployment-course
 
   # Create Cluster + Nodegroup (this takes some minutes)
-  eksctl create cluster --name eksctl-demo --region eu-central-1 --version 1.37 --nodes 2 --instance-types=t3.micro --profile deployment-course
+  # Note: select t3.medium, as t3.micro may not provide enough resources for all replicas!
+  eksctl create cluster --name eksctl-demo --region eu-central-1 --version 1.37 --nodes 2 --instance-types=t3.medium --profile deployment-course
+  aws eks update-kubeconfig --region eu-central-1 --name eksctl-demo --profile deployment-course
   kubectl config current-context
-  kubectl get nodes
+  kubectl get nodes -o wide
 
   # Deploy (apply) to the Kubernetes cluster
-  kubectl apply -f deployment.yml
-  kubectl rollout status deployment/simple-flask-deployment
+  kubectl apply -f deployment.yml  # deployment.apps/simple-flask-deployment created
+  kubectl rollout status deployment/simple-flask-deployment  # deployment "simple-flask-deployment" successfully rolled out
   kubectl get deployment,pods,nodes -o wide
   ```
 
 ![Kubectl Deployment](./assets/kubectl_deployment.jpg)
+
 - Check that the Pods use your image and reach **Running** and **Ready**. If a Pod shows **ErrImagePull** or **ImagePullBackOff**, verify the image name and tag in the manifest and confirm that the repository is public:
 
   ```powershell
@@ -2005,6 +2009,79 @@ This section uses the repository [cd0157-Server-Deployment-and-Containerization]
   kubectl logs deployment/simple-flask-deployment
   ```
 
+#### Understanding the Deployment YAML
+
+The file [`deployment.yml`](./lab/udacity_server_deployment_exercises/examples/Deploy_Flask_App/deployment.yml) is a **manifest**: a YAML description of the Kubernetes object you want the cluster to maintain. `kubectl apply -f deployment.yml` submits this desired state to the Kubernetes API; controllers then create or change resources to match it.
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: simple-flask-deployment
+  labels:
+    app: simple-flask
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: simple-flask
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 2
+      maxSurge: 2
+  template:
+    metadata:
+      labels:
+        app: simple-flask
+    spec:
+      containers:
+      - name: simple-flask
+        image: msagardia/simple-flask:v1
+        securityContext:
+          privileged: false
+          readOnlyRootFilesystem: false
+          allowPrivilegeEscalation: false
+        ports:
+          - containerPort: 8080
+
+```
+
+**Overview of the structure:**
+
+- `apiVersion`, `kind`, and `metadata` identify and describe the object. The top-level `spec` describes the desired Deployment. Inside it, `selector` tells the Deployment which Pods it manages, `strategy` describes how updates happen, and `template` describes the Pods it should create.
+- A **Deployment** is the controller that keeps the requested number of app copies running. Here, `replicas: 3` means three Pods, each running the same Flask container; it does not mean three nodes. The **nodes** are the worker machines that provide compute capacity, and the scheduler places those Pods on available nodes. In the current cluster, two nodes run the three replicas, with two Pods on one node and one on the other.
+- This manifest creates the Deployment and Pods, but it does **not** create a load balancer or a public address. With `kubectl port-forward deployment/simple-flask-deployment 8080:8080` (see below), `kubectl` chooses one Pod for that forwarding session, so requests through that session go to that Pod; it does not balance requests across all three replicas. If that Pod stops, the forwarding session may fail, and restarting it can select another Pod.
+- To distribute requests among the ready replicas, expose the Deployment through a Kubernetes **Service**. A `ClusterIP` Service is reachable inside the cluster; a `LoadBalancer` Service in EKS asks AWS to create an external load balancer that routes incoming requests to ready Pods. The Service and load balancer are separate resources from this Deployment manifest.
+- The nesting is meaningful: `template.metadata` and `template.spec` describe each Pod, while the top-level `metadata` and `spec` describe the Deployment. The Pod template's labels must match the Deployment selector.
+
+**Top-level fields and Deployment settings:**
+
+- `apiVersion: apps/v1` selects the stable Kubernetes API version that defines the Deployment object's fields.
+- `kind: Deployment` tells Kubernetes what type of object this manifest describes. A Deployment manages a set of matching Pods and replaces them when they fail or when the Pod template changes.
+- `metadata.name: simple-flask-deployment` gives this Deployment its name within its Kubernetes namespace. Commands such as `kubectl rollout status deployment/simple-flask-deployment` refer to it by this name.
+- `metadata.labels.app: simple-flask` attaches a label to the Deployment object itself. Labels are key/value tags that help organize and select Kubernetes objects; this label does not automatically label the Pods.
+- `spec.replicas: 3` asks Kubernetes to keep three matching Pods running. This is a desired count, and the cluster needs enough node capacity to schedule them.
+- `spec.selector.matchLabels.app: simple-flask` defines which Pods this Deployment manages. It must match the labels in the Pod template below; Kubernetes uses this selector to associate the Deployment with its Pods.
+- `spec.strategy.type: RollingUpdate` asks Kubernetes to replace Pods gradually when the Pod template changes, instead of stopping all old Pods before creating new ones.
+- `spec.strategy.rollingUpdate.maxUnavailable: 2` allows up to two desired replicas to be unavailable during an update. With three desired replicas, this can temporarily leave only one available while the rollout proceeds.
+- `spec.strategy.rollingUpdate.maxSurge: 2` allows Kubernetes to create up to two temporary Pods above the desired replica count during an update. These settings trade availability and temporary resource use; the nodes need room to schedule the extra Pods. The values here are absolute Pod counts, not percentages.
+
+**Pod template and container settings:**
+
+- `spec.template.metadata.labels.app: simple-flask` labels every Pod created from this template. This value matches `spec.selector.matchLabels.app`, which is required for the Deployment to manage those Pods.
+- `spec.template.spec.containers` is the list of containers that each Pod runs. This example has one container; a Pod can contain more than one when containers need to work closely together.
+- `containers[].name: simple-flask` names the container within each Pod. Kubernetes uses this name in container-specific commands and status output.
+- `containers[].image: msagardia/simple-flask:v1` tells the container runtime which image to download and run. It identifies the Docker Hub repository and the `v1` tag.
+- `securityContext.privileged: false` keeps the container from running in privileged mode, which would grant it broad access to the host. This is the safer default for an application container.
+- `securityContext.readOnlyRootFilesystem: false` allows the container to write to its root filesystem. This is convenient for this exercise, but production containers should use a read-only root filesystem when the application supports it.
+- `securityContext.allowPrivilegeEscalation: false` prevents processes in the container from gaining more privileges than their parent process.
+- `ports[].containerPort: 8080` documents that the application listens on port `8080` inside the container. It does not publish the port outside the Pod; use a Kubernetes Service or `kubectl port-forward` to reach the application.
+
+These settings explain why the earlier three-replica rollout remained Pending on two `t3.micro` nodes: the desired Pods plus Kubernetes system Pods exceeded the nodes' pod capacity. Reducing `replicas`, or adding sufficiently sized node capacity, lets the scheduler place the application Pods.
+
+For the authoritative field definitions, see the Kubernetes documentation for [Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/) and [container security context](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/).
+
 #### Access the application
 
 - A Deployment creates Pods but does not by itself provide a stable client-facing address. For a quick local test without creating an AWS load balancer, forward a local port to the Deployment:
@@ -2012,13 +2089,19 @@ This section uses the repository [cd0157-Server-Deployment-and-Containerization]
   ```powershell
   kubectl port-forward deployment/simple-flask-deployment 8080:8080
   ```
+
 - While port-forward is running, open **http://localhost:8080/** in a browser. Press **Ctrl+C** to stop forwarding.
+
+![Browser showing the Flask app](./assets/hello_world_browser.png)
+
 - To create an AWS load balancer for external access, expose the Deployment with a Service. This AWS resource can incur charges while it exists:
 
   ```powershell
   kubectl expose deployment simple-flask-deployment --name=simple-flask-service --type=LoadBalancer --port=80 --target-port=8080
   kubectl get service simple-flask-service --watch
+  # Get the value of the EXTERNAL-IP field for the load balancer
   ```
+
 - Wait for the Service's **EXTERNAL-IP** field to show a hostname instead of **pending**. Open `http://YOUR_LOAD_BALANCER_HOSTNAME/` in a browser; the Service listens on port **80** and forwards traffic to the app on port **8080**. Press **Ctrl+C** to stop watching Services.
 - The course recording uses port **8080** for the external Service too. This example uses the standard web port **80**, so the hostname URL does not need **:8080**.
 
@@ -2031,6 +2114,7 @@ This section uses the repository [cd0157-Server-Deployment-and-Containerization]
   kubectl describe pods -l app=simple-flask
   kubectl get events --sort-by=.metadata.creationTimestamp
   ```
+
 - If no nodes appear, confirm the EKS cluster has a node group and that its EC2 worker nodes joined the cluster. The earlier EKS section covers adding and checking worker nodes.
 - Delete the Service first so Kubernetes can release the AWS load balancer, then delete the Deployment:
 
@@ -2041,6 +2125,11 @@ This section uses the repository [cd0157-Server-Deployment-and-Containerization]
 
 - If you are finished with the cluster, follow the cluster cleanup instructions in [Creating an EKS Cluster via eksctl and AWS CLI](#creating-an-eks-cluster-via-eksctl-and-aws-cli); keep the cluster if you will use it in the next lesson.
 - For more kubectl commands, see the Kubernetes [kubectl cheat sheet](https://kubernetes.io/docs/reference/kubectl/cheatsheet/) and [kubectl reference](https://kubernetes.io/docs/reference/kubectl/).
+
+  ```powershell
+  eksctl delete cluster --name eksctl-demo --region eu-central-1 --wait --profile=deployment-course
+  ```
+
 
 ## Project: Deploy Your Flask App to Kubernetes Using EKS
 
