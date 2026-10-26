@@ -59,10 +59,32 @@ Table of Contents:
       - [Part 3: Create a Node Group](#part-3-create-a-node-group)
       - [Part 4: Clean Up](#part-4-clean-up)
     - [Installing eksctl](#installing-eksctl)
+      - [Prerequisites and AWS credentials](#prerequisites-and-aws-credentials)
+      - [Install on Windows with PowerShell](#install-on-windows-with-powershell)
+      - [Install on Linux](#install-on-linux)
+      - [Install on macOS with Homebrew](#install-on-macos-with-homebrew)
+      - [Create a basic cluster](#create-a-basic-cluster)
+      - [Create a cluster from a YAML configuration](#create-a-cluster-from-a-yaml-configuration)
+      - [List and delete clusters](#list-and-delete-clusters)
     - [Installing kubectl](#installing-kubectl)
+      - [Install kubectl on Windows](#install-kubectl-on-windows)
+      - [Install kubectl on Linux](#install-kubectl-on-linux)
+      - [Install kubectl on macOS](#install-kubectl-on-macos)
+      - [Configure kubectl to connect to EKS](#configure-kubectl-to-connect-to-eks)
+      - [Inspect clusters, nodes, and Pods](#inspect-clusters-nodes-and-pods)
+      - [Open a shell inside a Pod](#open-a-shell-inside-a-pod)
     - [Creating an EKS Cluster via eksctl and AWS CLI](#creating-an-eks-cluster-via-eksctl-and-aws-cli)
+      - [Check the tools and AWS credentials](#check-the-tools-and-aws-credentials)
+      - [Create the cluster](#create-the-cluster)
+      - [Check the cluster and worker nodes](#check-the-cluster-and-worker-nodes)
+      - [Delete the cluster when finished](#delete-the-cluster-when-finished)
   - [Deployment Using CI/CD: CloudFormation + CodeBuild + CodePipeline](#deployment-using-cicd-cloudformation--codebuild--codepipeline)
-  - [Extra: Deployment Using Terraform + Github Actions](#extra-deployment-using-terraform--github-actions)
+    - [Deploy a Flask Application Manually](#deploy-a-flask-application-manually)
+      - [Prepare the Docker Hub repository and exercise files](#prepare-the-docker-hub-repository-and-exercise-files)
+      - [Build and publish the image](#build-and-publish-the-image)
+      - [Configure and apply the Kubernetes Deployment](#configure-and-apply-the-kubernetes-deployment)
+      - [Access the application](#access-the-application)
+      - [Troubleshoot and clean up](#troubleshoot-and-clean-up)
   - [Project: Deploy Your Flask App to Kubernetes Using EKS](#project-deploy-your-flask-app-to-kubernetes-using-eks)
 
 ## Introduction
@@ -564,6 +586,7 @@ Account > AdministratorAccess > Open AWS Console
 
 ```bash
 # In the Terminal, for AWS CLI:
+$env:PATH = "C:\Program Files\Amazon\AWSCLIV2;" + $env:PATH
 aws sso login --profile deployment-course
 # Repeat the login command when the SSO session expires
 # To log out:
@@ -1045,6 +1068,7 @@ $env:AWS_PROFILE = "deployment-course-iam"
 aws sts get-caller-identity
 
 # Return to the existing SSO profile for everyday work
+$env:PATH = "C:\Program Files\Amazon\AWSCLIV2;" + $env:PATH
 aws sso login --profile deployment-course
 $env:AWS_PROFILE = "deployment-course"
 aws sts get-caller-identity
@@ -1479,12 +1503,12 @@ Notes:
 
 ### Installing eksctl
 
-- **eksctl** is the official command-line tool for creating and managing Amazon EKS clusters.
-- The course recording credits Amazon and Weaveworks with creating the tool; eksctl is now an open-source project.
-- eksctl uses AWS CloudFormation to provision the AWS resources that make up a cluster.
+- **`eksctl`** is the official command-line tool for creating and managing Amazon EKS clusters.
+- `eksctl` is now an open-source project.
+- `eksctl` uses AWS CloudFormation to provision the AWS resources that make up a cluster.
   - CloudFormation creates and manages AWS resources from a YAML or JSON template.
-  - For a basic cluster, eksctl generates the template, so you do not need to write it yourself.
-  - For a cluster with custom requirements, you can write a YAML configuration file and pass it to eksctl.
+  - For a basic cluster, `eksctl` generates the template, so you do not need to write it yourself.
+  - For a cluster with custom requirements, you can write a YAML configuration file and pass it to `eksctl`.
 - A basic EKS cluster can include a VPC, subnets, worker-node groups, node machine images (AMIs), EC2 instance types, and a Kubernetes API endpoint.
   - A VPC is an isolated virtual network with an IP address range.
   - A subnet is a smaller IP range inside a VPC, assigned to one Availability Zone.
@@ -1494,10 +1518,11 @@ Notes:
 
 #### Prerequisites and AWS credentials
 
-- Install and configure AWS CLI before using eksctl. The AWS credentials and Region that work for AWS CLI are also used by eksctl.
+- Install and configure AWS CLI before using `eksctl`. The AWS credentials and Region that work for AWS CLI are also used by `eksctl`. See [AWS CLI and Credentials](#aws-cli-and-credentials).
 - If you use an IAM Identity Center (SSO) profile, sign in and select the profile in PowerShell. Replace **deployment-course** with your own profile name.
 
   ```powershell
+  $env:PATH = "C:\Program Files\Amazon\AWSCLIV2;" + $env:PATH
   aws sso login --profile deployment-course
   $env:AWS_PROFILE = "deployment-course"
   aws sts get-caller-identity
@@ -1505,7 +1530,7 @@ Notes:
 
 - Setting **AWS_PROFILE** selects that profile for the current PowerShell session. Open a new session or set it again when needed.
 - The selected AWS role needs permission to create the EKS, EC2, CloudFormation, and IAM resources required by the cluster.
-- eksctl also needs an AWS IAM Authenticator command available in your PATH. Use **aws-iam-authenticator** or **aws eks get-token** from AWS CLI v2.
+- `eksctl` also needs an AWS IAM Authenticator command available in your PATH. Use **aws-iam-authenticator** or **aws eks get-token** from AWS CLI v2.
 - Follow the [official AWS eksctl installation instructions](https://docs.aws.amazon.com/eks/latest/eksctl/installation.html). AWS recommends downloading official releases; third-party package managers are not maintained or supported by AWS.
 
 #### Install on Windows with PowerShell
@@ -1603,8 +1628,43 @@ Notes:
 
 #### Create a cluster from a YAML configuration
 
-- A YAML configuration file lets you specify detailed cluster settings without putting every option in the command line.
-- This section does not cover configuration files in detail. See the [eksctl documentation and examples](https://eksctl.io/).
+- A YAML configuration file lets you specify cluster settings without putting every option on the command line. This example follows the [console walkthrough](#creating-an-eks-cluster-via-web-ui-console): it uses `myEKSCluster` in `eu-central-1`, the existing VPC, and a managed node group with two `t3.micro` instances and 20-GiB disks.
+- Replace the VPC and subnet ID placeholders with IDs from your account before running the command. Use the actual Availability Zone names shown for those subnets in your account, and select subnets in at least two AZs.
+
+  ```yaml
+  apiVersion: eksctl.io/v1alpha5
+  kind: ClusterConfig
+
+  metadata:
+    name: myEKSCluster
+    region: eu-central-1
+    version: "1.37"
+
+  vpc:
+    id: "vpc-REPLACE_WITH_YOUR_VPC_ID"
+    subnets:
+      public:
+        eu-central-1a:
+          id: "subnet-REPLACE_WITH_SUBNET_ID_IN_1A"
+        eu-central-1b:
+          id: "subnet-REPLACE_WITH_SUBNET_ID_IN_1B"
+
+  managedNodeGroups:
+    - name: myNodeGroup
+      instanceType: t3.micro
+      volumeSize: 20
+      minSize: 2
+      maxSize: 2
+      desiredCapacity: 2
+  ```
+
+- `apiVersion` and `kind` identify the document as an eksctl `ClusterConfig`.
+- Under `metadata`, `name` sets the cluster name, `region` sets the AWS Region, and `version` selects the Kubernetes version. Choose a version offered by EKS in that Region.
+- Under `vpc`, `id` selects the existing VPC. `subnets.public` maps each Availability Zone to a public subnet ID. The example uses two subnets in different AZs; replace both keys and IDs with the values from your VPC. Since these are public subnets and the node group does not enable private networking, the worker nodes use public subnets too.
+- Each item under `managedNodeGroups` defines an EKS-managed worker group. `name` identifies it, `instanceType` chooses the EC2 hardware, and `volumeSize` sets each node's root disk in GiB. `minSize`, `maxSize`, and `desiredCapacity` set the group's minimum, maximum, and target node counts. All are `2` here, so the group targets two nodes and cannot scale beyond two.
+- The `t3.micro` instance type matches the small console example, but has limited memory and may not be suitable for useful workloads. SSH settings are omitted, so this example does not enable remote SSH access.
+- eksctl creates the cluster and node IAM roles through CloudFormation; the YAML therefore does not reuse the manually created `myEKSClusterRole` or `myEKSWorkerNodeRole` from the console steps. The active AWS credentials must be allowed to create the required resources.
+- For the supported fields and schema, see the official [eksctl configuration-file schema](https://schema.eksctl.io/). For syntax and examples, see [creating clusters from configuration files](https://eksctl.io/usage/creating-and-managing-clusters/) and [configuring an existing VPC](https://eksctl.io/usage/vpc-configuration/).
 
   ```bash
   eksctl create cluster --config-file cluster.yaml
@@ -1634,15 +1694,353 @@ Notes:
 
 ### Installing kubectl
 
+- `kubectl` (pronounced "cube control") is the command-line client for communicating with a Kubernetes cluster. You can use it to inspect cluster resources and manage workloads such as Deployments and Pods.
+- Install a client version within one minor version of the Kubernetes cluster version. For example, kubectl `1.37` works with control planes `1.36`, `1.37`, and `1.38`.
+
+#### Install kubectl on Windows
+
+- In PowerShell, install using Windows Package Manager (`winget`):
+
+  ```powershell
+  winget install -e --id Kubernetes.kubectl
+  ```
+
+- Close and reopen PowerShell, then verify that kubectl is available:
+
+  ```powershell
+  kubectl version --client
+  ```
+
+- See the Kubernetes [Windows installation instructions](https://kubernetes.io/docs/tasks/tools/install-kubectl-windows/) for direct downloads and other package managers.
+
+#### Install kubectl on Linux
+
+- The following example installs kubectl `1.37.0` for an x86-64 Linux machine. Choose a version within one minor release of your cluster and use `arm64` in the URL for an ARM64 machine.
+
+  ```bash
+  KUBECTL_VERSION="v1.37.0"
+  curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+  sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+  kubectl version --client
+  ```
+
+- See the Kubernetes [Linux installation instructions](https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/) for package-manager options and checksum verification.
+
+#### Install kubectl on macOS
+
+- Install with Homebrew:
+
+  ```bash
+  brew install kubectl
+  kubectl version --client
+  ```
+
+- See the Kubernetes [macOS installation instructions](https://kubernetes.io/docs/tasks/tools/install-kubectl-macos/) for direct downloads and other package managers.
+
+#### Configure kubectl to connect to EKS
+
+- `kubectl` reads cluster connection settings from a **kubeconfig** file: `~/.kube/config`. For EKS, the AWS CLI can create or update this file and add a context for the cluster.
+- First, sign in to the AWS IAM Identity Center profile configured earlier. Then update kubeconfig for the console-created cluster:
+
+  ```powershell
+  $env:PATH = "C:\Program Files\Amazon\AWSCLIV2;" + $env:PATH
+  aws sso login --profile deployment-course
+  aws eks update-kubeconfig --region eu-central-1 --name myEKSCluster --profile deployment-course --alias myEKSCluster
+  ```
+
+- The kubeconfig is normally stored at `~/.kube/config` (`$HOME\.kube\config` on Windows). `update-kubeconfig` merges the cluster entry into this file and makes it the current context. Clusters created with `eksctl` normally have their kubeconfig entry added during cluster creation.
+- Confirm the active AWS identity and kubectl context:
+
+  ```powershell
+  aws sts get-caller-identity --profile deployment-course
+  kubectl config get-contexts
+  kubectl config current-context
+  ```
+
+- A **context** combines a cluster, user credentials, and optionally a namespace (logical partition: `dev`, `prod`, etc.). `kubectl config get-contexts` lists clusters configured in kubeconfig; it does not discover every EKS cluster in your AWS account. To list EKS clusters in AWS, use:
+
+  ```powershell
+  aws eks list-clusters --region eu-central-1 --profile deployment-course
+  ```
+
+- Switch to another context by using its name from `kubectl config get-contexts`:
+
+  ```powershell
+  kubectl config use-context myEKSCluster
+  ```
+
+#### Inspect clusters, nodes, and Pods
+
+- A **node** is a worker machine in the cluster. A **Pod** is the Kubernetes unit that runs one or more containers.
+- Check the API server connection and list worker nodes:
+
+  ```bash
+  kubectl cluster-info
+  kubectl get nodes -o wide
+  ```
+
+- List Pods in every namespace, or list Pods in a particular namespace:
+
+  ```bash
+  kubectl get pods --all-namespaces
+  kubectl get pods --namespace default -o wide
+  ```
+
+- List common resources in the `default` namespace, inspect a Pod, and view its logs. Replace the example names with resources in your cluster:
+
+  ```bash
+  kubectl get deployments,services,pods --namespace default
+  kubectl describe pod <pod-name> --namespace default
+  kubectl logs <pod-name> --namespace default
+  ```
+
+#### Open a shell inside a Pod
+
+- `kubectl exec` runs a command inside a container in a Pod. Use `sh` if the container image includes it; minimal images may not contain a shell.
+
+  ```bash
+  kubectl exec -it <pod-name> --namespace default -- sh
+  ```
+
+- Type `exit` to leave the shell. This enters a container in the Pod; it does not open an SSH session to the EC2 worker node.
+- For additional commands and options, see the Kubernetes [kubectl reference](https://kubernetes.io/docs/reference/kubectl/) and AWS [EKS kubeconfig instructions](https://docs.aws.amazon.com/eks/latest/userguide/create-kubeconfig.html).
+
 ### Creating an EKS Cluster via eksctl and AWS CLI
+
+- **eksctl** is a higher-level command-line tool for provisioning and managing EKS clusters. It uses AWS CloudFormation to create the cluster and associated AWS resources, including its VPC and a managed node group.
+- The three command-line tools have different roles:
+  - The **AWS CLI** authenticates to AWS and can call AWS service APIs directly.
+  - **eksctl** creates and manages the EKS cluster and its AWS infrastructure.
+  - **kubectl** talks to the Kubernetes API to inspect and manage resources inside a running cluster, such as nodes and Pods.
+- The command below creates a new cluster and a managed node group with two **t3.medium** instances in **eu-central-1**. It creates its own VPC; it does not reuse the VPC selected in the console walkthrough. To use an existing VPC, use the YAML example in [Create a cluster from a YAML configuration](#create-a-cluster-from-a-yaml-configuration).
+
+#### Check the tools and AWS credentials
+
+- Use AWS CLI v2.12.3 or later and eksctl version **0.215.0 or later**. Check your installed versions; kubectl should be within one minor version of the cluster's Kubernetes version.
+
+  ```powershell
+  aws --version
+  eksctl version
+  kubectl version --client
+  ```
+- This guide uses the IAM Identity Center profile **deployment-course**. Sign in and select the profile for the current PowerShell session so eksctl uses the same AWS identity as the AWS CLI:
+
+  ```powershell
+  $env:PATH = "C:\Program Files\Amazon\AWSCLIV2;" + $env:PATH
+  aws sso login --profile deployment-course
+  $env:AWS_PROFILE = "deployment-course"
+  aws sts get-caller-identity
+  ```
+
+- In Bash, set the profile in the current shell this way:
+
+  ```bash
+  export AWS_PROFILE=deployment-course
+  aws sso login --profile "$AWS_PROFILE"
+  aws sts get-caller-identity
+  ```
+
+- The AWS identity needs permission to create the required EKS, EC2, IAM, and CloudFormation resources and permission to access the cluster afterward.
+- EKS currently offers Kubernetes version **1.37** in standard support. Check the versions offered in your chosen Region before using the version option; change the example if necessary.
+
+  ```powershell
+  aws eks describe-cluster-versions --region eu-central-1 --query "clusterVersions[].clusterVersion" --output table
+  ```
+
+#### Create the cluster
+
+- Running the command without options uses the Region configured for the AWS CLI profile and creates a managed node group with two **m5.large** instances. The named command below makes the Region and cluster settings explicit.
+
+  ```bash
+  eksctl create cluster
+  ```
+- Create a cluster named **eksctl-demo** with two On-Demand worker nodes. Choose a cluster name and Kubernetes version that are available in your AWS account and Region.
+
+  ```bash
+  eksctl create cluster --name eksctl-demo --region eu-central-1 --version 1.37 --nodes 2 --instance-types=t3.micro --profile deployment-course
+  ```
+
+- Cluster provisioning takes several minutes. By default, eksctl creates a managed node group and writes a context for the cluster to kubeconfig, usually **~/.kube/config**. You do not need to run **aws eks update-kubeconfig** for a cluster just created by eksctl.
+- eksctl creates CloudFormation stacks for the cluster and node group. You can follow their progress in the [CloudFormation console for eu-central-1](https://eu-central-1.console.aws.amazon.com/cloudformation/home?region=eu-central-1#/stacks). Make sure the console is set to the same Region as the command.
+
+![CloudFormation Stack for EKS Cluster](./assets/cloudformation_eksctl_create.png)
+
+- Usually, the `eksctl create cluster` command above automatically creates a managed node group. If you need to create node group explicitly, you can use the `eksctl create nodegroup` command as shown below.
+
+  ```bash
+  eksctl create nodegroup --cluster eksctl-demo --region eu-central-1 --name eksctl-demo-ng --managed --node-type t3.micro --nodes 2
+  ```
+
+#### Check the cluster and worker nodes
+
+- Check eksctl's view of the cluster, then use kubectl to confirm that the Kubernetes API is reachable and both nodes are ready:
+
+  ```powershell
+  eksctl get cluster --name eksctl-demo --region eu-central-1
+  # If this fails, see below
+  kubectl cluster-info
+  kubectl get nodes -o wide
+  ```
+
+- Usually, when we create a cluster with eksctl, it automatically updates the kubeconfig file with the new cluster's context. However, if you encounter issues accessing the cluster, you can manually update the kubeconfig as shown below.
+
+  ```powershell
+  #$env:PATH = "C:\Program Files\Amazon\AWSCLIV2;" + $env:PATH
+  #$env:AWS_PROFILE = "deployment-course"
+  aws sso login --profile deployment-course
+  aws eks update-kubeconfig --region eu-central-1 --name eksctl-demo --profile deployment-course --alias eksctl-demo
+  kubectl config current-context  # eksctl-demo
+  kubectl cluster-info
+  kubectl get nodes -o wide
+  ```
+
+- In CloudFormation, the cluster stack's **Template** tab shows the infrastructure template eksctl submitted. The screenshot is from the course recording, so the current console layout may differ.
+
+![CloudFormation Stack for EKS Cluster](./assets/cloudformation_stack_cluster.png)
+
+#### Delete the cluster when finished
+
+- EKS clusters, EC2 worker nodes, storage, and networking resources can incur charges while they exist. Delete the test cluster when you no longer need it; the wait option makes eksctl wait for deletion to complete and report errors.
+
+  ```bash
+  eksctl delete cluster --name eksctl-demo --region eu-central-1 --wait
+  ```
+
+- eksctl removes resources it manages for this cluster. Check the AWS console afterward for resources you created separately or attached to the cluster, since those may need separate cleanup.
+- Prefer deleting an eksctl-created cluster with eksctl. CloudFormation is useful for viewing progress and diagnosing stacks; manually deleting a stack can leave the cluster in a partially deleted state if other resources still depend on it.
+- For command details, see the official [eksctl cluster management guide](https://eksctl.io/usage/creating-and-managing-clusters/), AWS's [EKS cluster creation guide](https://docs.aws.amazon.com/eks/latest/userguide/create-cluster.html), and the current [EKS Kubernetes version lifecycle](https://docs.aws.amazon.com/eks/latest/userguide/kubernetes-versions.html).
 
 ## Deployment Using CI/CD: CloudFormation + CodeBuild + CodePipeline
 
-:construction:
+This section uses the repository [cd0157-Server-Deployment-and-Containerization](https://github.com/udacity/cd0157-Server-Deployment-and-Containerization) clones as submodule into [`lab/udacity_server_deployment_exercises/`](./lab/udacity_server_deployment_exercises/).
 
-## Extra: Deployment Using Terraform + Github Actions
+### Deploy a Flask Application Manually
 
-:construction:
+- This exercise deploys the submodule's Hello World Flask app to the EKS cluster created in the previous sections.
+- The workflow is: build a container image, push it to Docker Hub, point the Kubernetes Deployment at that image, verify the Pods, and expose the app through a Service.
+- The detailed steps below assume kubectl is connected to the intended EKS cluster and its worker nodes are Ready; see [Installing kubectl](#installing-kubectl) and [Creating an EKS Cluster via eksctl and AWS CLI](#creating-an-eks-cluster-via-eksctl-and-aws-cli) for those setup steps.
+
+#### Prepare the Docker Hub repository and exercise files
+
+- Create a **public** [Docker Hub](https://hub.docker.com/) repository named **simple-flask**. A public image can be pulled by EKS without adding registry credentials to the cluster.
+- This exercise uses your Docker Hub repository, **<username>/simple-flask**. The manifest and commands below use the versioned image tag **v1**.
+
+![Container Registry](./assets/container_registry.jpg)
+
+![Docker Hub Image](./assets/docker_hub_image.jpeg)
+
+- The Udacity exercise repository was added earlier as a Git submodule. From the **01_ServerDeployment** directory, open the Flask deployment example inside it:
+
+  ```powershell
+  cd .\lab\udacity_server_deployment_exercises\examples\Deploy_Flask_App
+  ```
+
+- The folder contains
+  - [app.py](./lab/udacity_server_deployment_exercises/examples/Deploy_Flask_App/app.py),
+  - [Dockerfile](./lab/udacity_server_deployment_exercises/examples/Deploy_Flask_App/Dockerfile),
+  - and [deployment.yml](./lab/udacity_server_deployment_exercises/examples/Deploy_Flask_App/deployment.yml).
+- The Flask app listens on port **8080**, and the Kubernetes manifest creates three replicas.
+- The exercise Dockerfile now uses **python:3.13-slim**, consistent with the earlier Dockerfile exercise. The sample also enables Flask debug mode and is for learning, not production.
+
+#### Build and publish the image
+
+- Build the image with the versioned tag used by the Kubernetes manifest:
+
+  ```powershell
+  docker build --pull -t <username>/simple-flask:v1 .
+  docker image ls
+  ```
+
+- Sign in to Docker Hub and push the tagged image. Docker prompts you to complete authentication; do not put your password or access token in the command:
+
+  ```powershell
+  docker login --username <username>
+  docker push <username>/simple-flask:v1
+  ```
+
+- If the local image has a different name, retag it before pushing:
+
+  ```powershell
+  docker tag SOURCE_IMAGE:TAG <username>/simple-flask:v1
+  ```
+
+- Confirm that Docker Hub shows the **v1** tag before deploying it.
+
+![Docker Hub Image Tag](./assets/docker_hub_image_latest.png)
+
+#### Configure and apply the Kubernetes Deployment
+
+- [deployment.yml](./lab/udacity_server_deployment_exercises/examples/Deploy_Flask_App/deployment.yml) is configured to use the same image tag you just pushed:
+
+  ```yaml
+  image: <username>/simple-flask:v1
+  ```
+
+- The Deployment describes the Pods that run the app and maintains the requested replicas. Its container port is **8080**, matching the Flask app. Use enough worker-node capacity for all three replicas; if Pods remain Pending, inspect their events and adjust the node capacity or replica count.
+- Apply the manifest and wait until Kubernetes reports the rollout complete:
+
+  ```powershell
+  # Login
+  #$env:PATH = "C:\Program Files\Amazon\AWSCLIV2;" + $env:PATH
+  #$env:AWS_PROFILE = "deployment-course"
+  aws sso login --profile deployment-course
+
+  # Create Cluster + Nodegroup (this takes some minutes)
+  eksctl create cluster --name eksctl-demo --region eu-central-1 --version 1.37 --nodes 2 --instance-types=t3.micro --profile deployment-course
+  kubectl config current-context
+  kubectl get nodes
+
+  # Deploy (apply) to the Kubernetes cluster
+  kubectl apply -f deployment.yml
+  kubectl rollout status deployment/simple-flask-deployment
+  kubectl get deployment,pods,nodes -o wide
+  ```
+
+![Kubectl Deployment](./assets/kubectl_deployment.jpg)
+- Check that the Pods use your image and reach **Running** and **Ready**. If a Pod shows **ErrImagePull** or **ImagePullBackOff**, verify the image name and tag in the manifest and confirm that the repository is public:
+
+  ```powershell
+  kubectl get pods -l app=simple-flask -o wide
+  kubectl describe pods -l app=simple-flask
+  kubectl logs deployment/simple-flask-deployment
+  ```
+
+#### Access the application
+
+- A Deployment creates Pods but does not by itself provide a stable client-facing address. For a quick local test without creating an AWS load balancer, forward a local port to the Deployment:
+
+  ```powershell
+  kubectl port-forward deployment/simple-flask-deployment 8080:8080
+  ```
+- While port-forward is running, open **http://localhost:8080/** in a browser. Press **Ctrl+C** to stop forwarding.
+- To create an AWS load balancer for external access, expose the Deployment with a Service. This AWS resource can incur charges while it exists:
+
+  ```powershell
+  kubectl expose deployment simple-flask-deployment --name=simple-flask-service --type=LoadBalancer --port=80 --target-port=8080
+  kubectl get service simple-flask-service --watch
+  ```
+- Wait for the Service's **EXTERNAL-IP** field to show a hostname instead of **pending**. Open `http://YOUR_LOAD_BALANCER_HOSTNAME/` in a browser; the Service listens on port **80** and forwards traffic to the app on port **8080**. Press **Ctrl+C** to stop watching Services.
+- The course recording uses port **8080** for the external Service too. This example uses the standard web port **80**, so the hostname URL does not need **:8080**.
+
+#### Troubleshoot and clean up
+
+- If Pods are not Ready, inspect their status, events, and logs:
+
+  ```powershell
+  kubectl get pods -o wide
+  kubectl describe pods -l app=simple-flask
+  kubectl get events --sort-by=.metadata.creationTimestamp
+  ```
+- If no nodes appear, confirm the EKS cluster has a node group and that its EC2 worker nodes joined the cluster. The earlier EKS section covers adding and checking worker nodes.
+- Delete the Service first so Kubernetes can release the AWS load balancer, then delete the Deployment:
+
+  ```powershell
+  kubectl delete service simple-flask-service
+  kubectl delete -f deployment.yml
+  ```
+
+- If you are finished with the cluster, follow the cluster cleanup instructions in [Creating an EKS Cluster via eksctl and AWS CLI](#creating-an-eks-cluster-via-eksctl-and-aws-cli); keep the cluster if you will use it in the next lesson.
+- For more kubectl commands, see the Kubernetes [kubectl cheat sheet](https://kubernetes.io/docs/reference/kubectl/cheatsheet/) and [kubectl reference](https://kubernetes.io/docs/reference/kubectl/).
 
 ## Project: Deploy Your Flask App to Kubernetes Using EKS
 
