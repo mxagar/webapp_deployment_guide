@@ -102,10 +102,11 @@ Table of Contents:
         - [Section 6: Metadata (optional)](#section-6-metadata-optional)
       - [Intrinsic functions in the template](#intrinsic-functions-in-the-template)
       - [Recommended reading](#recommended-reading)
+      - [Clean Up](#clean-up)
     - [CloudFormation Exercise 1: VPC](#cloudformation-exercise-1-vpc)
     - [CloudFormation Exercise 2: EC2](#cloudformation-exercise-2-ec2)
-    - [CloudFormation: S3 (Extra)](#cloudformation-s3-extra)
-    - [CloudFormation: EKS (Extra)](#cloudformation-eks-extra)
+    - [CloudFormation: S3 Example (Extra)](#cloudformation-s3-example-extra)
+    - [CloudFormation: EKS Example (Extra)](#cloudformation-eks-example-extra)
     - [CloudFormation: Dependencies, Conditions, Mappings (Extra)](#cloudformation-dependencies-conditions-mappings-extra)
     - [CodePipeline](#codepipeline)
     - [CodeBuild](#codebuild)
@@ -2894,13 +2895,26 @@ Intrinsic functions are built-in expressions that let a template refer to parame
 - [Template anatomy](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/template-anatomy.html#template-anatomy-sections)
 - [More CloudFormation concepts and examples](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/cfn-whatis-concepts.html#w2ab1b5c15b7)
 
+#### Clean Up
+
+- Delete the `mySecondTest` stack after the exercise. This removes not just the stack, but all the resources described in it: the VPC and networking resources created by the template, including its NAT Gateways, which can incur charges:
+
+  ```powershell
+  aws cloudformation delete-stack `
+    --stack-name mySecondTest `
+    --region eu-central-1 `
+    --profile deployment-course
+  ```
+
+- Stack deletion runs asynchronously. Wait until the stack reaches `DELETE_COMPLETE` in the CloudFormation console before assuming its resources have been removed.
+
 ### CloudFormation Exercise 1: VPC
 
 ### CloudFormation Exercise 2: EC2
 
-### CloudFormation: S3 (Extra)
+### CloudFormation: S3 Example (Extra)
 
-### CloudFormation: EKS (Extra)
+### CloudFormation: EKS Example (Extra)
 
 ### CloudFormation: Dependencies, Conditions, Mappings (Extra)
 
