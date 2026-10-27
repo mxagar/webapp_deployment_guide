@@ -116,10 +116,19 @@ Table of Contents:
       - [Verify the deployment](#verify-the-deployment)
       - [Delete the stack](#delete-the-stack)
     - [CloudFormation: S3 Example (Extra)](#cloudformation-s3-example-extra)
+      - [Create a simple S3 bucket](#create-a-simple-s3-bucket)
     - [CloudFormation: EKS Example (Extra)](#cloudformation-eks-example-extra)
+      - [Create an EKS cluster with eksctl](#create-an-eks-cluster-with-eksctl)
     - [CloudFormation: Dependencies, Conditions, Mappings (Extra)](#cloudformation-dependencies-conditions-mappings-extra)
-    - [CodePipeline](#codepipeline)
-    - [CodeBuild](#codebuild)
+      - [Dependencies](#dependencies)
+      - [Conditions](#conditions)
+      - [Mappings](#mappings)
+    - [CodePipeline and Continuous Delivery](#codepipeline-and-continuous-delivery)
+      - [Continuous delivery](#continuous-delivery)
+      - [AWS CodePipeline](#aws-codepipeline)
+      - [Additional information](#additional-information)
+      - [Managing a pipeline with CloudFormation](#managing-a-pipeline-with-cloudformation)
+    - [CodeBuild and Continuous Integration](#codebuild-and-continuous-integration)
     - [CloudFormation Exercise 3: Pipeline](#cloudformation-exercise-3-pipeline)
     - [Final Pipeline: IAM Role for CodeBuild](#final-pipeline-iam-role-for-codebuild)
     - [Final Pipeline: Authorize CodeBuild Using EKS RBAC](#final-pipeline-authorize-codebuild-using-eks-rbac)
@@ -3158,13 +3167,235 @@ aws cloudformation delete-stack `
 
 ### CloudFormation: S3 Example (Extra)
 
+#### Create a simple S3 bucket
+
+CloudFormation creates an S3 bucket from an `AWS::S3::Bucket` resource. This example leaves the bucket name unspecified, so CloudFormation assigns a unique physical name. It blocks public access, enables default encryption, and turns on versioning.
+
+Save this as [`template_S3.yml`](./lab/udacity_server_deployment_exercises/examples/Cloudformation/template_S3.yml):
+
+```yaml
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Create a private, versioned S3 bucket
+
+Resources:
+  ExerciseBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+
+Outputs:
+  BucketName:
+    Description: Name of the bucket created by this stack
+    Value: !Ref ExerciseBucket
+```
+
+- `ExerciseBucket` is the template's logical ID. `!Ref ExerciseBucket` returns the physical bucket name, which the output displays after stack creation.
+- Create the stack from the directory containing the template:
+
+```powershell
+aws cloudformation create-stack `
+  --stack-name s3-learning-example `
+  --template-body file://template_S3.yml `
+  --region eu-central-1 `
+  --profile deployment-course
+```
+
+- If you later delete the stack, the bucket must be empty first. See the [S3 bucket resource reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-s3-bucket.html).
+
 ### CloudFormation: EKS Example (Extra)
+
+#### Create an EKS cluster with eksctl
+
+You can define every EKS resource directly in CloudFormation, but an EKS cluster requires many connected resources and settings. For this course, use `eksctl`: it accepts a cluster configuration and creates and manages CloudFormation stacks for the cluster and its node group. You can inspect those stacks in the CloudFormation console in the configured region.
+
+Save a configuration such as this as [`template_EKS.yml`](./lab/udacity_server_deployment_exercises/examples/Cloudformation/template_EKS.yml):
+
+```yaml
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: eksctl-cf-demo
+  region: eu-central-1
+
+managedNodeGroups:
+  - name: workers
+    instanceType: t3.medium
+    desiredCapacity: 2
+```
+
+- `metadata` identifies the cluster and AWS region. `managedNodeGroups` asks EKS to manage a group of two EC2 worker nodes of the selected instance type.
+- Sign in to the configured AWS IAM Identity Center profile, then select it for `eksctl` in this PowerShell session:
+
+```powershell
+aws sso login --profile deployment-course
+$env:AWS_PROFILE = "deployment-course"
+eksctl create cluster `
+  --config-file .\template_EKS.yml
+```
+
+- `eksctl` provisions resources and creates the CloudFormation stacks; you do not submit this file with `aws cloudformation create-stack`.
+- When you have finished learning, delete the cluster with `eksctl delete cluster --config-file .\template_EKS.yml`. EKS clusters and their EC2 nodes incur charges while running. Keep the same `AWS_PROFILE` selection in the PowerShell session.
+- See the official [`eksctl` cluster configuration guide](https://eksctl.io/usage/creating-and-managing-clusters/).
 
 ### CloudFormation: Dependencies, Conditions, Mappings (Extra)
 
-### CodePipeline
+These features control how CloudFormation creates resources and selects template values. They are not AWS resources themselves.
 
-### CodeBuild
+The following examples are template fragments that illustrate each feature; they are not complete stacks by themselves.
+
+#### Dependencies
+
+CloudFormation normally infers ordering when one resource refers to another with `!Ref`, `!GetAtt`, or `!Sub`. Use `DependsOn` when a resource must wait for another resource even though its properties do not directly refer to it.
+
+For example, a route to an internet gateway must wait for the VPC gateway attachment:
+
+```yaml
+PublicRoute:
+  Type: AWS::EC2::Route
+  DependsOn: VPCGatewayAttachment
+  Properties:
+    RouteTableId: !Ref PublicRouteTable
+    DestinationCidrBlock: 0.0.0.0/0
+    GatewayId: !Ref InternetGateway
+```
+
+This fragment assumes the template also defines `PublicRouteTable`, `InternetGateway`, and `VPCGatewayAttachment`. `DependsOn` makes CloudFormation finish the attachment before creating the route. See the [`DependsOn` reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-attribute-dependson.html).
+
+#### Conditions
+
+Conditions let the stack create a resource only when a parameter or other condition is true. This example creates the bucket only when `Environment` is `production`:
+
+```yaml
+Parameters:
+  Environment:
+    Type: String
+    Default: development
+    AllowedValues:
+      - development
+      - production
+
+Conditions:
+  IsProduction: !Equals [!Ref Environment, production]
+
+Resources:
+  ProductionBucket:
+    Type: AWS::S3::Bucket
+    Condition: IsProduction
+```
+
+If the parameter is `development`, CloudFormation skips `ProductionBucket`; if it is `production`, CloudFormation creates it. See the [Conditions section reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/conditions-section-structure.html).
+
+#### Mappings
+
+Mappings are fixed lookup tables in the template. `Fn::FindInMap` selects a value using the map name, a top-level key, and a second-level key. This example chooses a region label using the stack's AWS region:
+
+```yaml
+Mappings:
+  RegionLabels:
+    eu-central-1:
+      Label: Frankfurt
+    us-east-1:
+      Label: NVirginia
+
+Resources:
+  ExampleBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      Tags:
+        - Key: RegionLabel
+          Value: !FindInMap [RegionLabels, !Ref AWS::Region, Label]
+```
+
+Here `!Ref AWS::Region` supplies the region where the stack is created, and `!FindInMap` retrieves the matching `Label` for the bucket tag. Every region you use must have an entry in the mapping. See the [Mappings section reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/mappings-section-structure.html) and [`Fn::FindInMap` reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/intrinsic-function-reference-findinmap.html).
+
+### CodePipeline and Continuous Delivery
+
+#### Continuous delivery
+
+- Continuous delivery automates steps such as building, testing, and packaging software so that a release is ready to deploy. Smaller, frequent releases can provide feedback sooner.
+- A delivery pipeline may stop at a test or staging environment for human quality assurance. If it automatically deploys each change to production, that practice is called continuous deployment.
+- The final project uses AWS services to build a continuous delivery pipeline.
+
+#### AWS CodePipeline
+
+- AWS CodePipeline is a managed service for defining and running a software release workflow. You can create and view pipelines in the AWS console, with the AWS CLI, or through infrastructure as code such as CloudFormation.
+- A pipeline is organized into stages, such as **Source**, **Build**, **Test**, and **Deploy**. Each stage contains one or more actions, which can run in sequence or in parallel.
+- A source action retrieves a revision from a provider such as Amazon S3 or GitHub through an AWS CodeConnections connection. A source change can trigger a pipeline run when change detection is configured.
+- Actions produce and consume artifacts, such as source files or a packaged application. CodePipeline stores these artifacts in the pipeline's artifact store and passes them to actions that need them. Transitions connect stages and can be disabled to pause progress; a manual approval action can also pause a release before deployment.
+- The example below has three stages: a source action reads code from an S3 bucket; a build action builds and tests it before another action deploys to staging; then a manual approval action gates deployment to production.
+
+![CodePipeline Example](./assets/codepipeline_example.png)
+
+#### Additional information
+
+- Read the AWS [CodePipeline concepts](https://docs.aws.amazon.com/codepipeline/latest/userguide/concepts.html) guide and the CloudFormation guide to [working with templates](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/template-guide.html).
+
+#### Managing a pipeline with CloudFormation
+
+- CloudFormation is one way to define and manage a pipeline and related AWS resources together as a stack. It is not required to use CodePipeline, but it can make related resources easier to review and update as a unit.
+- A CloudFormation YAML template describes resources to create and may define parameters whose values are supplied when the stack is created.
+- A later project lesson introduces the `ci-cd-codepipeline.cfn.yml` template.
+
+- Explore [CloudFormation sample templates](https://aws.amazon.com/cloudformation/aws-cloudformation-templates/) or follow the [CloudFormation getting-started walkthrough](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/GettingStarted.Walkthrough.html) to learn how stacks create and remove related resources.
+
+### CodeBuild and Continuous Integration
+
+#### Continuous integration
+
+- Continuous integration (CI) combines frequent changes to a shared code repository with automated builds and tests. Smaller changes help reveal bugs earlier and reduce the need to run those checks manually.
+- Continuous delivery builds on CI by preparing changes for release, often adding packaging, deployment, and approval steps.
+
+#### AWS CodeBuild
+
+- AWS CodeBuild is a managed build service that can compile code, run tests, and create deployment-ready packages.
+- A CodeBuild project can run as a build action in a CodePipeline stage. The final project uses CodeBuild to build and test application code.
+
+![CodeBuild](./assets/codebuild.png)
+
+CodeBuild can handle the build and test work in a continuous delivery pipeline.
+
+#### Additional resources
+
+- [AWS CodeBuild overview](https://aws.amazon.com/codebuild/)
+- [Create a pipeline with CodeBuild and CodePipeline](https://docs.aws.amazon.com/codebuild/latest/userguide/how-to-create-pipeline.html)
+- [CodeBuild buildspec reference](https://docs.aws.amazon.com/codebuild/latest/userguide/build-spec-ref.html)
+
+#### Build instructions with `buildspec.yml`
+
+A CodeBuild project's buildspec file contains the commands and settings for a build. By default, the file is named `buildspec.yml` and is stored in the source directory. AWS provides additional [CodeBuild samples](https://docs.aws.amazon.com/codebuild/latest/userguide/samples.html). The following example builds a Docker image, runs it, and prints a message:
+
+```yaml
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - nohup /usr/local/bin/dockerd --host=unix:///var/run/docker.sock --host=tcp://127.0.0.1:2375 --storage-driver=overlay2&
+      - timeout 15 sh -c "until docker info; do echo .; sleep 1; done"
+  pre_build:
+    commands:
+      - docker build -t helloworld .
+  build:
+    commands:
+      - docker images
+      - docker run helloworld echo "Hello, World!"
+```
+
+- The buildspec uses version `0.2` and runs commands in the `install`, `pre_build`, and `build` phases. The commands are Docker commands, similar to those you can run locally, but they execute in CodeBuild's build environment.
+- To build Docker images in a Linux CodeBuild environment, enable **Privileged** mode in the CodeBuild project's environment. This example also starts the Docker daemon during `install` and waits for it to respond before building.
+- See the [buildspec syntax reference](https://docs.aws.amazon.com/codebuild/latest/userguide/build-spec-ref.html#build-spec-ref-syntax) for other phases and settings.
+
 
 ### CloudFormation Exercise 3: Pipeline
 
