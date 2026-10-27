@@ -92,6 +92,16 @@ Table of Contents:
       - [Create and manage a stack using the AWS CLI](#create-and-manage-a-stack-using-the-aws-cli)
       - [Create a stack using the web console](#create-a-stack-using-the-web-console)
     - [CloudFormation: Template Sections](#cloudformation-template-sections)
+      - [Example: create a VPC stack](#example-create-a-vpc-stack)
+      - [How the template is organized](#how-the-template-is-organized)
+        - [Section 1: Template format version (optional)](#section-1-template-format-version-optional)
+        - [Section 2: Description (optional)](#section-2-description-optional)
+        - [Section 3: Parameters (optional)](#section-3-parameters-optional)
+        - [Section 4: Resources (required)](#section-4-resources-required)
+        - [Section 5: Outputs (optional)](#section-5-outputs-optional)
+        - [Section 6: Metadata (optional)](#section-6-metadata-optional)
+      - [Intrinsic functions in the template](#intrinsic-functions-in-the-template)
+      - [Recommended reading](#recommended-reading)
     - [CloudFormation Exercise 1: VPC](#cloudformation-exercise-1-vpc)
     - [CloudFormation Exercise 2: EC2](#cloudformation-exercise-2-ec2)
     - [CloudFormation: S3 (Extra)](#cloudformation-s3-extra)
@@ -2270,8 +2280,619 @@ You can perform the same exercise in the [CloudFormation console](https://consol
 
 Never store sensitive information, such as credentials, in a template file!
 
-
 ### CloudFormation: Template Sections
+
+CloudFormation templates are declarative YAML or JSON documents that describe the AWS resources and configuration you want. Reusing a template helps create consistent environments and track intended infrastructure changes.
+
+- A **template** describes resources by their type and properties.
+- A **stack** is the collection of resources CloudFormation creates and manages together from a template.
+
+#### Example: create a VPC stack
+
+The example [`mySecondTemplate.yaml`](./assets/mySecondTemplate.yaml) creates a VPC network with public and private subnets across two Availability Zones. We will create the stack first, then use the template to understand its sections.
+
+```yaml
+
+Description: >
+    Udacity
+    This template deploys a VPC, with a pair of public and private subnets in two Availabilty Zones (Data Centers).
+    A subnet is considered public if it has an InternetGateway attached to it.
+    Therefore, we will have to create an InternetGateway as well.
+    On the other hand, a private subnet can communicate to the outside world via a NAT gateway placed in the public subnet,
+    which in turn will use the InternetGateway. The stack will also have a Route Table for each subnet individually.
+    A route table comprises of routes.
+
+Parameters:
+
+    EnvironmentName:
+        Description: An environment name that will be prefixed to resource names
+        Type: String
+        Default: UdacityProject
+
+    VpcCIDR:
+        Description: Please enter the IP range (CIDR notation) for this VPC
+        Type: String
+        Default: 10.0.0.0/16
+
+    PublicSubnet1CIDR:
+        Description: Please enter the IP range (CIDR notation) for the public subnet in the first Availability Zone
+        Type: String
+        Default: 10.0.0.0/24
+
+    PublicSubnet2CIDR:
+        Description: Please enter the IP range (CIDR notation) for the public subnet in the second Availability Zone
+        Type: String
+        Default: 10.0.1.0/24
+
+    PrivateSubnet1CIDR:
+        Description: Please enter the IP range (CIDR notation) for the private subnet in the first Availability Zone
+        Type: String
+        Default: 10.0.2.0/24
+
+    PrivateSubnet2CIDR:
+        Description: Please enter the IP range (CIDR notation) for the private subnet in the second Availability Zone
+        Type: String
+        Default: 10.0.3.0/24
+
+Resources:
+
+    VPC:
+        Type: AWS::EC2::VPC
+        Properties:
+            CidrBlock: !Ref VpcCIDR
+            EnableDnsHostnames: true
+            Tags:
+                - Key: Name
+                  Value: !Ref EnvironmentName
+
+    InternetGateway:
+        Type: AWS::EC2::InternetGateway
+        Properties:
+            Tags:
+                - Key: Name
+                  Value: !Ref EnvironmentName
+
+    InternetGatewayAttachment:
+        Type: AWS::EC2::VPCGatewayAttachment
+        Properties:
+            InternetGatewayId: !Ref InternetGateway
+            VpcId: !Ref VPC
+
+    PublicSubnet1:
+        Type: AWS::EC2::Subnet
+        Properties:
+            VpcId: !Ref VPC
+            AvailabilityZone: !Select [ 0, !GetAZs '' ]
+            CidrBlock: !Ref PublicSubnet1CIDR
+            MapPublicIpOnLaunch: true
+            Tags:
+                - Key: Name
+                  Value: !Sub ${EnvironmentName} Public Subnet (AZ1)
+
+    PublicSubnet2:
+        Type: AWS::EC2::Subnet
+        Properties:
+            VpcId: !Ref VPC
+            AvailabilityZone: !Select [ 1, !GetAZs '' ]
+            CidrBlock: !Ref PublicSubnet2CIDR
+            MapPublicIpOnLaunch: true
+            Tags:
+                - Key: Name
+                  Value: !Sub ${EnvironmentName} Public Subnet (AZ2)
+
+    PrivateSubnet1:
+        Type: AWS::EC2::Subnet
+        Properties:
+            VpcId: !Ref VPC
+            AvailabilityZone: !Select [ 0, !GetAZs '' ]
+            CidrBlock: !Ref PrivateSubnet1CIDR
+            MapPublicIpOnLaunch: false
+            Tags:
+                - Key: Name
+                  Value: !Sub ${EnvironmentName} Private Subnet (AZ1)
+
+    PrivateSubnet2:
+        Type: AWS::EC2::Subnet
+        Properties:
+            VpcId: !Ref VPC
+            AvailabilityZone: !Select [ 1, !GetAZs '' ]
+            CidrBlock: !Ref PrivateSubnet2CIDR
+            MapPublicIpOnLaunch: false
+            Tags:
+                - Key: Name
+                  Value: !Sub ${EnvironmentName} Private Subnet (AZ2)
+
+    NatGateway1EIP:
+        Type: AWS::EC2::EIP
+        DependsOn: InternetGatewayAttachment
+        Properties:
+            Domain: vpc
+
+    NatGateway2EIP:
+        Type: AWS::EC2::EIP
+        DependsOn: InternetGatewayAttachment
+        Properties:
+            Domain: vpc
+
+    NatGateway1:
+        Type: AWS::EC2::NatGateway
+        Properties:
+            AllocationId: !GetAtt NatGateway1EIP.AllocationId
+            SubnetId: !Ref PublicSubnet1
+
+    NatGateway2:
+        Type: AWS::EC2::NatGateway
+        Properties:
+            AllocationId: !GetAtt NatGateway2EIP.AllocationId
+            SubnetId: !Ref PublicSubnet2
+
+    PublicRouteTable:
+        Type: AWS::EC2::RouteTable
+        Properties:
+            VpcId: !Ref VPC
+            Tags:
+                - Key: Name
+                  Value: !Sub ${EnvironmentName} Public Routes
+
+    DefaultPublicRoute:
+        Type: AWS::EC2::Route
+        DependsOn: InternetGatewayAttachment
+        Properties:
+            RouteTableId: !Ref PublicRouteTable
+            DestinationCidrBlock: 0.0.0.0/0
+            GatewayId: !Ref InternetGateway
+
+    PublicSubnet1RouteTableAssociation:
+        Type: AWS::EC2::SubnetRouteTableAssociation
+        Properties:
+            RouteTableId: !Ref PublicRouteTable
+            SubnetId: !Ref PublicSubnet1
+
+    PublicSubnet2RouteTableAssociation:
+        Type: AWS::EC2::SubnetRouteTableAssociation
+        Properties:
+            RouteTableId: !Ref PublicRouteTable
+            SubnetId: !Ref PublicSubnet2
+
+
+    PrivateRouteTable1:
+        Type: AWS::EC2::RouteTable
+        Properties:
+            VpcId: !Ref VPC
+            Tags:
+                - Key: Name
+                  Value: !Sub ${EnvironmentName} Private Routes (AZ1)
+
+    DefaultPrivateRoute1:
+        Type: AWS::EC2::Route
+        Properties:
+            RouteTableId: !Ref PrivateRouteTable1
+            DestinationCidrBlock: 0.0.0.0/0
+            NatGatewayId: !Ref NatGateway1
+
+    PrivateSubnet1RouteTableAssociation:
+        Type: AWS::EC2::SubnetRouteTableAssociation
+        Properties:
+            RouteTableId: !Ref PrivateRouteTable1
+            SubnetId: !Ref PrivateSubnet1
+
+    PrivateRouteTable2:
+        Type: AWS::EC2::RouteTable
+        Properties:
+            VpcId: !Ref VPC
+            Tags:
+                - Key: Name
+                  Value: !Sub ${EnvironmentName} Private Routes (AZ2)
+
+    DefaultPrivateRoute2:
+        Type: AWS::EC2::Route
+        Properties:
+            RouteTableId: !Ref PrivateRouteTable2
+            DestinationCidrBlock: 0.0.0.0/0
+            NatGatewayId: !Ref NatGateway2
+
+    PrivateSubnet2RouteTableAssociation:
+        Type: AWS::EC2::SubnetRouteTableAssociation
+        Properties:
+            RouteTableId: !Ref PrivateRouteTable2
+            SubnetId: !Ref PrivateSubnet2
+
+Outputs:
+
+    VPC:
+        Description: A reference to the created VPC
+        Value: !Ref VPC
+        Export:
+          Name: !Sub ${EnvironmentName}-VPCID
+
+    VPCPublicRouteTable:
+        Description: Public Routing
+        Value: !Ref PublicRouteTable
+        Export:
+          Name: !Sub ${EnvironmentName}-PUB-RT
+
+    VPCPrivateRouteTable1:
+        Description: Private Routing AZ1
+        Value: !Ref PrivateRouteTable1
+        Export:
+          Name: !Sub ${EnvironmentName}-PRI1-RT
+
+    VPCPrivateRouteTable2:
+        Description: Private Routing AZ2
+        Value: !Ref PrivateRouteTable2
+        Export:
+          Name: !Sub ${EnvironmentName}-PRI2-RT
+
+    PublicSubnets:
+        Description: A list of the public subnets
+        Value: !Join [ ",", [ !Ref PublicSubnet1, !Ref PublicSubnet2 ]]
+        Export:
+          Name: !Sub ${EnvironmentName}-PUB-NETS
+
+    PrivateSubnets:
+        Description: A list of the private subnets
+        Value: !Join [ ",", [ !Ref PrivateSubnet1, !Ref PrivateSubnet2 ]]
+        Export:
+          Name: !Sub ${EnvironmentName}-PRIV-NETS
+
+    PublicSubnet1:
+        Description: A reference to the public subnet in the 1st Availability Zone
+        Value: !Ref PublicSubnet1
+        Export:
+          Name: !Sub ${EnvironmentName}-PUB1-SN
+
+    PublicSubnet2:
+        Description: A reference to the public subnet in the 2nd Availability Zone
+        Value: !Ref PublicSubnet2
+        Export:
+          Name: !Sub ${EnvironmentName}-PUB2-SN
+
+    PrivateSubnet1:
+        Description: A reference to the private subnet in the 1st Availability Zone
+        Value: !Ref PrivateSubnet1
+        Export:
+          Name: !Sub ${EnvironmentName}-PRI1-SN
+
+    PrivateSubnet2:
+        Description: A reference to the private subnet in the 2nd Availability Zone
+        Value: !Ref PrivateSubnet2
+        Export:
+          Name: !Sub ${EnvironmentName}-PRI2-SN
+```
+
+Run the following command. It creates the `mySecondTest` stack in `eu-central-1` using the `deployment-course` AWS profile; the template's default parameter values are used.
+
+> **Cost warning:** This example creates two NAT Gateways and two Elastic IP addresses. NAT Gateways have hourly and data processing charges. Delete the stack after the exercise and check that its resources were removed.
+
+```powershell
+aws cloudformation create-stack `
+  --stack-name mySecondTest `
+  --template-body file://assets/mySecondTemplate.yaml `
+  --region eu-central-1 `
+  --profile deployment-course
+```
+
+To override parameter defaults, use `--parameters` with each template parameter's logical name and the value you want. Use this version **instead of** the command above if the stack has not already been created:
+
+```powershell
+aws cloudformation create-stack `
+  --stack-name mySecondTest `
+  --template-body file://assets/mySecondTemplate.yaml `
+  --parameters `
+    "ParameterKey=EnvironmentName,ParameterValue=MyLab" `
+    "ParameterKey=PublicSubnet1CIDR,ParameterValue=10.0.10.0/24" `
+  --region eu-central-1 `
+  --profile deployment-course
+```
+
+Here, `EnvironmentName` and `PublicSubnet1CIDR` override their `Default` values in the template; parameters omitted from `--parameters` continue to use their defaults. Parameter keys must match the names under `Parameters`, and subnet CIDRs must fit inside the VPC range without overlapping other subnets. See the [`create-stack --parameters` reference](https://docs.aws.amazon.com/cli/latest/reference/cloudformation/create-stack.html#options).
+
+CloudFormation provisions all resources declared in the template. You can follow the operation in the CloudFormation console and wait for the stack status to become `CREATE_COMPLETE`.
+
+![Successfully created stack](./assets/create_stack.png)
+
+#### How the template is organized
+
+- `Resources` is required; the other major sections discussed below are optional.
+- Sections can generally appear in any order, but individual rules still apply. For example, `Description` must follow `AWSTemplateFormatVersion` when both are present.
+- Values in one section can be referenced from another. For example, resources use `!Ref` to read parameter values, and outputs can refer to resources.
+
+##### Section 1: Template format version (optional)
+
+The previous, smaller VPC example included this declaration:
+
+```yaml
+AWSTemplateFormatVersion: '2010-09-09'
+```
+
+- This field identifies the template format, not the CloudFormation API version.
+- The `mySecondTemplate.yaml` example above omits the field. CloudFormation assumes the latest format version when it is absent; if specified, `2010-09-09` is currently the only valid value.
+
+##### Section 2: Description (optional)
+
+- `Description` is a human-readable note about the template. In YAML, `>` allows the description to span multiple lines; CloudFormation presents the resulting text as the template description.
+- If `AWSTemplateFormatVersion` is present, `Description` must immediately follow it. The description must be a literal string no longer than 1,024 bytes.
+
+![Description section](./assets/stack_template_description.png)
+
+*The description also appears in the CloudFormation console's stack details.*
+
+##### Section 3: Parameters (optional)
+
+- Parameters act like inputs to a reusable template. CloudFormation asks for values when creating or updating a stack in the console; a CLI caller can provide values as well.
+- This example declares six parameters:
+  - `EnvironmentName` is a string used to prefix resource names and tags. Its default is `UdacityProject`.
+  - `VpcCIDR` sets the VPC address range; its default is `10.0.0.0/16`.
+  - `PublicSubnet1CIDR` and `PublicSubnet2CIDR` set the public subnet ranges; their defaults are `10.0.0.0/24` and `10.0.1.0/24`.
+  - `PrivateSubnet1CIDR` and `PrivateSubnet2CIDR` set the private subnet ranges; their defaults are `10.0.2.0/24` and `10.0.3.0/24`.
+- Each parameter has a required `Type` and can also have a `Description`, a `Default`, or other constraints. In the example, all six are `String` parameters.
+- We can override the default parameter values when running the `aws cloudformation create-stack` command by using the `--parameters` option (see below).
+- `!Ref ParameterLogicalID` (e.g., `!Ref EnvironmentName`) substitutes the parameter's chosen value wherever the template uses it. Since the example's create-stack command does not pass `--parameters`, CloudFormation uses these defaults.
+- CloudFormation does not import parameter definitions from another YAML file: parameters must be declared in the template that uses them. The `AWS::Include` transform can insert snippets stored in Amazon S3 into many parts of a template, but AWS does not allow it in the `Parameters` section.
+- To reuse **values**, supply them when creating or updating a stack. A parent template can also pass values to a nested stack's declared parameters; this passes values between stacks, but does not import the parameter declarations themselves.
+
+![Parameters section](./assets/stack_template_parameters.png)
+
+*The template's `Parameters` section.*
+
+![Parameters in the web-console](./assets/stack_parameters_web_ui.png)
+
+*Parameters as shown when creating a stack in the console.*
+
+Section snippet:
+
+```yaml
+# ...
+Parameters:
+    EnvironmentName:
+        Description: An environment name that will be prefixed to resource names
+        Type: String
+        Default: UdacityProject
+    VpcCIDR:
+        Description: Please enter the IP range (CIDR notation) for this VPC
+        Type: String
+        Default: 10.0.0.0/16
+# ...
+```
+
+To override the default parameter values, use the `--parameters` option with the `aws cloudformation create-stack` command, specifying the parameter key and the new value. For example:
+
+```powershell
+aws cloudformation create-stack `
+  --stack-name mySecondTest `
+  --template-body file://assets/mySecondTemplate.yaml `
+  --parameters `
+    "ParameterKey=EnvironmentName,ParameterValue=MyLab" `
+    "ParameterKey=PublicSubnet1CIDR,ParameterValue=10.0.10.0/24" `
+  --region eu-central-1 `
+  --profile deployment-course
+```
+
+##### Section 4: Resources (required)
+
+- `Resources` declares the AWS resources CloudFormation will provision and manage. It must contain at least one resource, such as a VPC, EC2 instance, or database.
+- Each resource entry has:
+  - A unique **logical ID** required by the template. It is the name used to refer to the resource within the template; AWS assigns the actual physical ID when it creates the resource.
+  - A **`Type`** identifying the AWS resource, such as `AWS::EC2::VPC`.
+  - **`Properties`** that configure that resource. The available properties differ by resource type.
+  - Optional resource attributes such as **`DependsOn`**, which adds an explicit creation dependency, and **`DeletionPolicy`**, which controls what happens to a resource when the stack is deleted.
+- This template builds a VPC network with public and private subnets across two Availability Zones. **You do not need to understand every network resource to read the template**. The same pattern—logical ID, type, and configuration—applies to other CloudFormation resource types. Each resource has a job in the network:
+  - The **VPC** is the network boundary for these AWS resources. Its `10.0.0.0/16` CIDR block provides the IP address range from which its subnets are carved.
+  - The **four subnets** are smaller IP ranges inside the VPC: one public and one private subnet in each of two Availability Zones. Subnets give resources a place in the network, and using two zones spreads resources across separate AWS locations for availability.
+  - The **Internet Gateway (IGW)** is the VPC's connection point for internet-routable traffic. The `VPCGatewayAttachment` attaches the IGW to the VPC; creating an IGW alone does not connect it to the VPC.
+  - The **three route tables** tell subnets where to send traffic. The public subnets share one route table, while each private subnet has its own table. A `SubnetRouteTableAssociation` connects each subnet to its chosen table.
+  - The **routes** are the rules inside those tables. The public table has a default IPv4 route (`0.0.0.0/0`) to the IGW. Each private table has a default route to the NAT Gateway in the same Availability Zone. A default route handles destinations not covered by a more specific route.
+  - The **two NAT Gateways** sit in the public subnets. They let resources in private subnets start outbound connections to the internet, for example to download updates, while those resources have no public IP address. Return traffic for those connections can come back through the NAT Gateway; unsolicited inbound internet connections cannot be initiated through it.
+  - The **two Elastic IP addresses (EIPs)** provide public IPv4 addresses for the public NAT Gateways. Each NAT Gateway uses one EIP when it sends private subnet traffic out to the internet.
+- A subnet is public because its associated route table has a route to the IGW; the IGW itself attaches to the VPC, not directly to the subnet. A resource in a public subnet still needs a public IP address and permissive security-group rules for internet access. See AWS's [subnet routing explanation](https://docs.aws.amazon.com/vpc/latest/userguide/subnet-route-tables.html).
+- The template uses one NAT Gateway per Availability Zone so each private subnet can route through a NAT Gateway in its own zone. This avoids depending on the other zone for outbound traffic, but NAT Gateways and their data processing can incur charges. Delete this learning stack when you finish and check that the NAT Gateways and EIPs were removed.
+
+Template snippet:
+
+```yaml
+# ...
+Resources:
+    VPC:
+        Type: AWS::EC2::VPC
+        Properties:
+            CidrBlock: !Ref VpcCIDR
+            EnableDnsHostnames: true
+            Tags:
+                - Key: Name
+                  Value: !Ref EnvironmentName
+# ...
+```
+
+![Resources section. The `AWS::EC2::VPC` resource is highlighted](./assets/stack_vpc_ec2.png)
+
+*The `AWS::EC2::VPC` resource is highlighted in the `Resources` section.*
+
+![Resources in the web-console - page 1](./assets/stack_resources.png)
+
+*Resources listed in the CloudFormation console, page 1.*
+
+![Resources in the web-console - page 2](./assets/stack_resources_2.png)
+
+*Resources listed in the CloudFormation console, page 2.*
+
+Other **common resource types** (representative list; see the [full CloudFormation type catalog](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-template-resource-type-ref.html)); each linked resource reference documents its supported properties.
+- **Networking:**
+  - [`AWS::EC2::VPC`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-ec2-vpc.html) creates an isolated virtual network and its address range.
+  - [`AWS::EC2::Subnet`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-ec2-subnet.html) creates a network segment in one Availability Zone.
+  - [`AWS::EC2::InternetGateway`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-ec2-internetgateway.html) creates an Internet Gateway that can be attached to a VPC.
+  - [`AWS::EC2::VPCGatewayAttachment`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-ec2-vpcgatewayattachment.html) attaches an Internet Gateway or virtual private gateway to a VPC.
+  - [`AWS::EC2::RouteTable`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-ec2-routetable.html) stores routes that direct subnet traffic.
+  - [`AWS::EC2::Route`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-ec2-route.html) sends traffic for a destination range to a gateway or another network target.
+  - [`AWS::EC2::SubnetRouteTableAssociation`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-ec2-subnetroutetableassociation.html) associates a subnet with a route table.
+  - [`AWS::EC2::NatGateway`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-ec2-natgateway.html) lets resources in private subnets initiate connections to outside networks without assigning those resources public IP addresses.
+  - [`AWS::EC2::SecurityGroup`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-ec2-securitygroup.html) defines allowed inbound and outbound network traffic for supported resources.
+  - [`AWS::EC2::EIP`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-ec2-eip.html) allocates an Elastic IP address, a static public IPv4 address for AWS resources.
+- **Compute and storage:**
+  - [`AWS::EC2::Instance`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-ec2-instance.html) launches a virtual machine.
+  - [`AWS::AutoScaling::AutoScalingGroup`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-autoscaling-autoscalinggroup.html) manages a group of EC2 instances and can adjust the group size.
+  - [`AWS::EC2::Volume`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-ec2-volume.html) creates an Amazon Elastic Block Store (EBS) block-storage volume.
+  - [`AWS::S3::Bucket`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-s3-bucket.html) creates an object-storage bucket.
+- **Identity and access:**
+  - [`AWS::IAM::Role`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-iam-role.html) creates an IAM role that a trusted user or AWS service can assume.
+  - [`AWS::IAM::Policy`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-iam-policy.html) attaches an inline permissions policy to IAM users, groups, or roles.
+  - [`AWS::IAM::ManagedPolicy`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-iam-managedpolicy.html) creates a reusable managed permissions policy.
+  - [`AWS::IAM::InstanceProfile`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-iam-instanceprofile.html) associates an IAM role with EC2 instances.
+- **Databases:**
+  - [`AWS::RDS::DBInstance`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-rds-dbinstance.html) creates a managed relational database instance.
+  - [`AWS::RDS::DBCluster`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-rds-dbcluster.html) creates an Amazon Aurora or Multi-AZ DB cluster.
+  - [`AWS::RDS::DBSubnetGroup`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-rds-dbsubnetgroup.html) defines the subnets where RDS can place a database.
+  - [`AWS::DynamoDB::Table`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-dynamodb-table.html) creates a managed NoSQL table.
+- **Containers and traffic routing:**
+  - [`AWS::ECR::Repository`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-ecr-repository.html) creates an image repository for container images and artifacts.
+  - [`AWS::EKS::Cluster`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-eks-cluster.html) creates an Amazon EKS Kubernetes control plane.
+  - [`AWS::EKS::Nodegroup`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-eks-nodegroup.html) creates a managed group of EC2 worker nodes for an EKS cluster.
+  - [`AWS::ECS::Cluster`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-ecs-cluster.html) creates a logical grouping for Amazon ECS tasks and services.
+  - [`AWS::ECS::TaskDefinition`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-ecs-taskdefinition.html) describes the containers, resources, and settings for an ECS task.
+  - [`AWS::ECS::Service`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-ecs-service.html) keeps a chosen number of ECS tasks running.
+  - [`AWS::ElasticLoadBalancingV2::LoadBalancer`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-elasticloadbalancingv2-loadbalancer.html) creates an Application, Network, or Gateway Load Balancer.
+  - [`AWS::ElasticLoadBalancingV2::Listener`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-elasticloadbalancingv2-listener.html) listens for connections on a load balancer and applies its routing rules.
+  - [`AWS::ElasticLoadBalancingV2::TargetGroup`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-elasticloadbalancingv2-targetgroup.html) groups the targets, such as instances or IP addresses, that receive routed traffic.
+- **Serverless applications and operations:**
+  - [`AWS::Lambda::Function`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-lambda-function.html) creates a function that runs code in response to events or direct invocation.
+  - [`AWS::Logs::LogGroup`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-logs-loggroup.html) stores log streams and their shared settings, such as retention.
+  - [`AWS::SSM::Parameter`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-ssm-parameter.html) creates a configuration parameter in Systems Manager Parameter Store.
+  - [`AWS::CloudFormation::Stack`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-cloudformation-stack.html) includes a separate template as a nested stack.
+
+##### Section 5: Outputs (optional)
+
+- `Outputs` returns useful values from the stack, such as resource IDs. Each output has a logical ID and a `Value`; it can also have a `Description` and an `Export` name.
+- This example outputs the VPC ID, route table IDs, and public/private subnet IDs. The `VPC` output uses `Value: !Ref VPC` to return the VPC's physical ID.
+- Use `aws cloudformation describe-stacks` to inspect stack details and outputs. To display all stack details, run:
+
+  ```powershell
+  aws cloudformation describe-stacks `
+    --stack-name mySecondTest `
+    --region eu-central-1 `
+    --profile deployment-course
+  ```
+
+- To show only the output values in a table, add a JMESPath query:
+
+  ```powershell
+  aws cloudformation describe-stacks `
+    --stack-name mySecondTest `
+    --query "Stacks[0].Outputs" `
+    --output table `
+    --region eu-central-1 `
+    --profile deployment-course
+  ```
+
+- An output is not automatically available to another stack; add an `Export` name and use `!ImportValue` in the other stack to share it.
+- CloudFormation export names must be unique within an account and Region. A stack whose output is imported cannot be deleted or have that exported value changed until the import is removed.
+
+Template snippet:
+
+```yaml
+# ...
+Outputs:
+    VPC:
+        Description: A reference to the created VPC
+        Value: !Ref VPC
+        Export:
+          Name: !Sub ${EnvironmentName}-VPCID
+# ...
+```
+
+![Outputs section](./assets/stack_outputs.png)
+
+*The `VPC` output uses an intrinsic function to set its value.*
+
+![Outputs in the web-console](./assets/stack_outputs_web_ui.png)
+
+*Outputs shown in the CloudFormation console.*
+
+##### Section 6: Metadata (optional)
+
+- `Metadata` stores additional information for CloudFormation or tools that process the template. The example template does not include this section.
+- A common template-level key, `AWS::CloudFormation::Interface`, groups and orders parameters and assigns friendly labels in the CloudFormation console. This metadata affects console presentation; CLI and API calls do not use it.
+
+#### Intrinsic functions in the template
+
+Intrinsic functions are built-in expressions that let a template refer to parameter values, resource identifiers, or values computed while CloudFormation processes the template. The example uses the following functions:
+
+- **[`Fn::Sub`](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/intrinsic-function-reference-sub.html), written `!Sub` in YAML,** substitutes variables in a string. In this template, `!Sub ${EnvironmentName}-VPCID` places the selected `EnvironmentName` value into the export name.
+
+![Stack template export](./assets/stack_template_export.png)
+
+*The VPC export name includes the value of `EnvironmentName`, substituted when CloudFormation processes the template.*
+
+1. **[`Fn::GetAZs`](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/intrinsic-function-reference-getavailabilityzones.html), written `!GetAZs`,** returns the Availability Zones available to the account in a specified Region. An empty string (`''`) means the stack's Region. `!Select` below chooses an entry from this list.
+
+   ```yaml
+   PublicSubnet1:
+     Type: AWS::EC2::Subnet
+     Properties:
+       VpcId: !Ref VPC
+       AvailabilityZone: !Select [0, !GetAZs '']
+       CidrBlock: !Ref PublicSubnet1CIDR
+       MapPublicIpOnLaunch: true
+       Tags:
+         - Key: Name
+           Value: !Sub '${EnvironmentName} Public Subnet (AZ1)'
+   ```
+
+   This creates `PublicSubnet1` in the first Availability Zone returned for the stack's Region. It gets the VPC ID and subnet CIDR from the `VPC` resource and `PublicSubnet1CIDR` parameter, and builds the subnet's `Name` tag with `!Sub`.
+
+2. **[`Fn::Select`](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/intrinsic-function-reference-select.html), written `!Select`,** returns the item at a zero-based index in a list. Here, index `0` selects the first Availability Zone; index `1` in the second subnet selects the next one.
+
+3. **[`Ref`](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/intrinsic-function-reference-ref.html), written `!Ref`,** returns a parameter's supplied value or a resource's identifier. For example, `!Ref VPC` supplies the created VPC ID. The `InternetGatewayAttachment` resource uses `!Ref` to connect the Internet Gateway and VPC by their logical IDs.
+
+![Using !Ref intrinsic function](./assets/stack_template_ref.png)
+
+4. **[`Fn::ImportValue`](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/intrinsic-function-reference-importvalue.html), written `!ImportValue`,** retrieves an output exported by another stack in the same account and Region. This lets one stack use a value, such as a VPC ID, created by another stack. Example:
+
+   The first template creates a VPC and exports its ID. Create this network stack before the stack that imports the VPC:
+
+   ```yaml
+   # network-stack.yaml
+   Parameters:
+     EnvironmentName:
+       Type: String
+       Default: CfnImportDemo
+   Resources:
+     VPC:
+       Type: AWS::EC2::VPC
+       Properties:
+         CidrBlock: 10.0.0.0/16
+         EnableDnsHostnames: true
+   Outputs:
+     VPCID:
+       Description: The ID of the VPC created by this stack
+       Value: !Ref VPC
+       Export:
+         Name: !Sub '${EnvironmentName}-VPCID'
+   ```
+
+   The second template imports that VPC ID and uses it as the VPC for an application security group:
+
+   ```yaml
+   # application-stack.yaml
+   Parameters:
+     EnvironmentName:
+       Type: String
+       Default: CfnImportDemo
+   Resources:
+     AppSecurityGroup:
+       Type: AWS::EC2::SecurityGroup
+       Properties:
+         GroupDescription: Security group for application resources
+         VpcId:
+           Fn::ImportValue:
+             !Sub '${EnvironmentName}-VPCID'
+   ```
+
+   Both templates construct the same export name from `EnvironmentName`, so the consumer resolves the VPC ID exported by the network stack. The stacks must be in the same AWS account and Region. CloudFormation will not let you delete the exporting stack or change this export while another stack imports it.
+
+#### Recommended reading
+
+- [Working with AWS CloudFormation templates](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/template-guide.html)
+- [Template anatomy](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/template-anatomy.html#template-anatomy-sections)
+- [More CloudFormation concepts and examples](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/cfn-whatis-concepts.html#w2ab1b5c15b7)
 
 ### CloudFormation Exercise 1: VPC
 
