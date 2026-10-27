@@ -104,7 +104,17 @@ Table of Contents:
       - [Recommended reading](#recommended-reading)
       - [Clean Up](#clean-up)
     - [CloudFormation Exercise 1: VPC](#cloudformation-exercise-1-vpc)
+      - [Create a CloudFormation stack](#create-a-cloudformation-stack)
+      - [Inspect and update the stack](#inspect-and-update-the-stack)
+      - [Clean up](#clean-up-1)
+      - [References](#references)
     - [CloudFormation Exercise 2: EC2](#cloudformation-exercise-2-ec2)
+      - [Prerequisites](#prerequisites)
+      - [Update the parameter file](#update-the-parameter-file)
+      - [Review the CloudFormation template](#review-the-cloudformation-template)
+      - [Create the stack](#create-the-stack)
+      - [Verify the deployment](#verify-the-deployment)
+      - [Delete the stack](#delete-the-stack)
     - [CloudFormation: S3 Example (Extra)](#cloudformation-s3-example-extra)
     - [CloudFormation: EKS Example (Extra)](#cloudformation-eks-example-extra)
     - [CloudFormation: Dependencies, Conditions, Mappings (Extra)](#cloudformation-dependencies-conditions-mappings-extra)
@@ -2586,6 +2596,19 @@ aws cloudformation create-stack `
   --profile deployment-course
 ```
 
+Also, we can pass a `my_parameters.json` file using the `--parameters` option with the `file://` prefix. For example:
+
+```powershell
+aws cloudformation create-stack `
+  --stack-name mySecondTest `
+  --template-body file://assets/mySecondTemplate.yaml `
+  --parameters file://assets/my_parameters.json `
+  --region eu-central-1 `
+  --profile deployment-course
+```
+
+There is an example of using a JSON file with parameters in the section [CloudFormation Exercise 2: EC2](#cloudformation-exercise-2-ec2).
+
 Here, `EnvironmentName` and `PublicSubnet1CIDR` override their `Default` values in the template; parameters omitted from `--parameters` continue to use their defaults. Parameter keys must match the names under `Parameters`, and subnet CIDRs must fit inside the VPC range without overlapping other subnets. See the [`create-stack --parameters` reference](https://docs.aws.amazon.com/cli/latest/reference/cloudformation/create-stack.html#options).
 
 CloudFormation provisions all resources declared in the template. You can follow the operation in the CloudFormation console and wait for the stack status to become `CREATE_COMPLETE`.
@@ -2629,7 +2652,7 @@ AWSTemplateFormatVersion: '2010-09-09'
 - Each parameter has a required `Type` and can also have a `Description`, a `Default`, or other constraints. In the example, all six are `String` parameters.
 - We can override the default parameter values when running the `aws cloudformation create-stack` command by using the `--parameters` option (see below).
 - `!Ref ParameterLogicalID` (e.g., `!Ref EnvironmentName`) substitutes the parameter's chosen value wherever the template uses it. Since the example's create-stack command does not pass `--parameters`, CloudFormation uses these defaults.
-- CloudFormation does not import parameter definitions from another YAML file: parameters must be declared in the template that uses them. The `AWS::Include` transform can insert snippets stored in Amazon S3 into many parts of a template, but AWS does not allow it in the `Parameters` section.
+- CloudFormation does not import parameter definitions from another YAML file: parameters must be declared in the template that uses them; however, we can pass parameter values from a JSON file using the `--parameters` option with the `file://` prefix; there is an example of using a JSON file with parameters in the section [CloudFormation Exercise 2: EC2](#cloudformation-exercise-2-ec2). The `AWS::Include` transform can insert snippets stored in Amazon S3 into many parts of a template, but AWS does not allow it in the `Parameters` section.
 - To reuse **values**, supply them when creating or updating a stack. A parent template can also pass values to a nested stack's declared parameters; this passes values between stacks, but does not import the parameter declarations themselves.
 
 ![Parameters section](./assets/stack_template_parameters.png)
@@ -2668,6 +2691,8 @@ aws cloudformation create-stack `
   --region eu-central-1 `
   --profile deployment-course
 ```
+
+We can also pass a JSON file with parameters using the `--parameters` option. There is an example of using a JSON file with parameters in the section [CloudFormation Exercise 2: EC2](#cloudformation-exercise-2-ec2).
 
 ##### Section 4: Resources (required)
 
@@ -2910,7 +2935,226 @@ Intrinsic functions are built-in expressions that let a template refer to parame
 
 ### CloudFormation Exercise 1: VPC
 
+- `eksctl` provisions EKS resources through CloudFormation. In the demonstrated setup, CloudFormation showed separate stacks for the EKS control plane and its node group.
+- This exercise uses a supplied template to create a VPC. The next exercise uses a different template to create an EC2 instance.
+- The supplied file is named `template_VPC.yml`: it declares an `AWS::EC2::VPC` resource.
+
+#### Create a CloudFormation stack
+
+The template [`template_VPC.yml`](./lab/udacity_server_deployment_exercises/examples/Cloudformation/template_VPC.yml) defines one VPC with the CIDR block `10.0.0.0/16`, enables DNS hostnames, and adds a tag. YAML indentation determines the structure, so preserve it when editing the template.
+
+```yaml
+AWSTemplateFormatVersion: 2010-09-09
+Description: Udacity - This template deploys a Virtual Private Network
+Resources:
+  UdacityVPC:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: 'true'
+      Tags:
+      - Key: name
+        Value: myfirsttestvpc
+```
+
+- Run the commands from the directory containing `template_VPC.yml`. These examples use the `deployment-course` AWS CLI profile and `eu-central-1` region.
+
+```powershell
+# Create the stack and its VPC.
+cd lab/udacity_server_deployment_exercises/examples/Cloudformation
+aws cloudformation create-stack `
+  --stack-name myFirstTest `
+  --template-body file://template_VPC.yml `
+  --region eu-central-1 `
+  --profile deployment-course
+```
+
+- In the AWS CloudFormation console, select the same region and open the stack's **Events** tab to follow resource creation and see whether the stack completed.
+
+#### Inspect and update the stack
+
+- Describe the stack and its outputs and resources from PowerShell:
+
+```powershell
+cd lab/udacity_server_deployment_exercises/examples/Cloudformation
+aws cloudformation describe-stacks `
+  --stack-name myFirstTest `
+  --region eu-central-1 `
+  --profile deployment-course
+```
+
+- Output:
+
+```json
+{
+    "Stacks": [
+        {
+            "StackId": "arn:aws:cloudformation:eu-central-1:xxx:stack/myFirstTest/xxx",
+            "StackName": "myFirstTest",
+            "Description": "Udacity - This template deploys a Virtual Private Network",
+            "CreationTime": "2026-10-25T14:02:31.346000+00:00",
+            "RollbackConfiguration": {},
+            "StackStatus": "CREATE_COMPLETE",
+            "DisableRollback": false,
+            "NotificationARNs": [],
+            "Tags": [],
+            "EnableTerminationProtection": false,
+            "DriftInformation": {
+                "StackDriftStatus": "NOT_CHECKED"
+            }
+        }
+    ]
+}
+```
+
+- If you omit `--stack-name`, CloudFormation describes all stacks visible to the selected profile in the specified region. See the [describe-stacks reference](https://docs.aws.amazon.com/cli/latest/reference/cloudformation/describe-stacks.html).
+- Update the existing stack after changing the template. This example reuses the same template; CloudFormation reports that no update is needed if the effective template has not changed.
+
+```powershell
+cd lab/udacity_server_deployment_exercises/examples/Cloudformation
+aws cloudformation update-stack `
+  --stack-name myFirstTest `
+  --template-body file://template_VPC.yml `
+  --region eu-central-1 `
+  --profile deployment-course
+```
+
+See the [update-stack reference](https://docs.aws.amazon.com/cli/latest/reference/cloudformation/update-stack.html).
+
+#### Clean up
+
+Delete the stack when you have finished. CloudFormation also deletes resources it manages in the stack, including this VPC, when they can be deleted successfully.
+
+```powershell
+cd lab/udacity_server_deployment_exercises/examples/Cloudformation
+aws cloudformation delete-stack `
+  --stack-name myFirstTest `
+  --region eu-central-1 `
+  --profile deployment-course
+```
+
+#### References
+
+- [CloudFormation template basics](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/gettingstarted.templatebasics.html)
+- [CloudFormation `create-stack` CLI reference](https://docs.aws.amazon.com/cli/latest/reference/cloudformation/create-stack.html)
+- [CloudFormation CLI commands](https://docs.aws.amazon.com/cli/latest/reference/cloudformation/index.html#cli-aws-cloudformation)
+
+
 ### CloudFormation Exercise 2: EC2
+
+- This section demonstrates a CloudFormation template that creates an EC2 web server and its security group. The walkthrough below contains the detailed parameter setup, deployment, verification, and cleanup steps.
+- The template takes the VPC ID, public subnet ID, and Amazon Machine Image (AMI) ID as parameters. **These values must refer to resources and an image available in the same AWS region.**
+
+#### Prerequisites
+
+- Have a VPC and a public subnet in that VPC. A public subnet needs a route to an internet gateway for the instance to be reachable from the internet and to download packages during startup. VPC and subnet IDs are region-specific.
+- Find and copy the VPC ID from the AWS console: (`eu-central-1`) `VPC > Your VPCs > VPC ID`
+
+![VPC](./assets/vpc_available.png)
+
+- Find and copy the ID of a public subnet in that VPC: (`eu-central-1`) `VPC > Subnets > Subnet ID`
+
+![Subnets](./assets/subnets_available.png)
+
+- Finally, copy the ID of an [Amazon Machine Image (AMI)](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/finding-an-ami.html) that is compatible with the template's startup script (e.g., Amazon Linux 2023). Ensure the AMI is available in the same region as your VPC and subnet: (`eu-central-1`) `EC2 > Launch Instances > Choose AMI Amazon Linux 2023 (copy ID) > Cancel`
+
+#### Update the parameter file
+
+The [my_parameters.json](./lab/udacity_server_deployment_exercises/examples/Cloudformation/my_parameters.json) file supplies values for the parameters declared by [template_EC2.yml](./lab/udacity_server_deployment_exercises/examples/Cloudformation/template_EC2.yml). Replace the sample values with IDs from your account and selected region:
+
+- `myVPC`: the VPC ID.
+- `PublicSubnet`: the ID of a public subnet within that VPC.
+- `AMItoUse`: an AMI ID compatible with the template's startup script. AMI IDs vary by region and can change over time. For a currently supported image such as Amazon Linux 2023. Update the startup script to use the matching package manager (`dnf`) as well.
+- Keep each `ParameterKey` exactly the same as the corresponding parameter name in the template; CloudFormation parameter names are case-sensitive.
+
+```json
+[
+    {
+        "ParameterKey": "myVPC",
+        "ParameterValue": "vpc-xxx"
+      },
+      {
+        "ParameterKey": "PublicSubnet",
+        "ParameterValue": "subnet-xxx"
+      },
+      {
+        "ParameterKey": "AMItoUse",
+        "ParameterValue": "ami-xxx"
+      }
+]
+```
+
+![Update these variables in the my_parameters.json file](./assets/my_parameters_json.jpeg)
+
+
+#### Review the CloudFormation template
+
+The provided [`template_EC2.yml`](./lab/udacity_server_deployment_exercises/examples/Cloudformation/template_EC2.yml) creates two resources:
+
+- `AWS::EC2::SecurityGroup` creates a virtual firewall in the selected VPC. It allows inbound HTTP traffic over TCP port 80 from `0.0.0.0/0` (any IPv4 address) and allows outbound traffic. This is open to the internet for the exercise; restrict the source range for real services. See the [security group resource reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-ec2-security-group.html).
+- `AWS::EC2::Instance` launches a `t3.micro` instance using the supplied AMI. Its network interface uses the selected subnet and the security group created above, and requests a public IPv4 address. References connect resources by their logical IDs in the template; these IDs are not display names or tags. See the [EC2 instance resource reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-ec2-instance.html).
+- `UserData` runs a shell script when the instance first launches. Here, it updates packages, installs Apache HTTP Server (`httpd`), starts the service, and enables it to start after a reboot. `Fn::Base64` encodes the script in the format EC2 expects.
+
+If you choose an Amazon Linux 2023 AMI, use its `dnf` package manager in `UserData` (instead of `yum`). Replace the existing `UserData` block in the template with this example:
+
+```yaml
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          dnf update -y
+          dnf install -y httpd
+          systemctl enable --now httpd
+```
+
+This installs Apache, starts it immediately, and configures it to start after a reboot. Keep the indentation under `Properties` as shown.
+
+![Template with two resources: a Security group and an EC2 instance](./assets/template_resources.png)
+
+Template with two resources: a Security group and an EC2 instance
+
+![Choose the AMI ID](./assets/ami_id.png)
+
+#### Create the stack
+
+Run this command from the directory containing `template_EC2.yml` and `my_parameters.json`. The command uses the `deployment-course` profile and `eu-central-1` region, consistent with the previous exercise.
+
+```powershell
+cd lab/udacity_server_deployment_exercises/examples/Cloudformation
+aws cloudformation create-stack `
+  --stack-name myStack2 `
+  --template-body file://template_EC2.yml `
+  --parameters file://my_parameters.json `
+  --region eu-central-1 `
+  --profile deployment-course
+```
+
+#### Verify the deployment
+
+- In the AWS console, select `eu-central-1`, open CloudFormation, and inspect the stack's **Events** tab. The security group and EC2 instance should show successful creation. Then confirm that the instance appears in the EC2 console.
+- Wait for the instance to pass its status checks, then copy its public IPv4 address.
+
+![Copy the public IP of the EC2 instance](./assets/public_ip.jpeg)
+
+- Open the address in a browser using HTTP (not HTTPS). If user data completed and network access is configured, you should see the Apache test page.
+
+```text
+http://<public-ip-address>
+```
+
+![Response from the Apache server at the `http://<EC2-public IP>`](./assets/test_page.jpeg)
+
+Response from the Apache server at the http://<EC2-public IP>
+
+#### Delete the stack
+
+When finished, delete the stack. CloudFormation deletes the EC2 instance and security group managed by this stack, subject to successful deletion.
+
+```powershell
+aws cloudformation delete-stack `
+  --stack-name myStack2 `
+  --region eu-central-1 `
+  --profile deployment-course
+```
 
 ### CloudFormation: S3 Example (Extra)
 
