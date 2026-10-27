@@ -87,10 +87,15 @@ Table of Contents:
       - [Access the application](#access-the-application)
       - [Troubleshoot and clean up](#troubleshoot-and-clean-up)
     - [CloudFormation: Introduction](#cloudformation-introduction)
+      - [What is a CloudFormation template?](#what-is-a-cloudformation-template)
+      - [What is a stack?](#what-is-a-stack)
+      - [Create and manage a stack using the AWS CLI](#create-and-manage-a-stack-using-the-aws-cli)
+      - [Create a stack using the web console](#create-a-stack-using-the-web-console)
     - [CloudFormation: Template Sections](#cloudformation-template-sections)
     - [CloudFormation Exercise 1: VPC](#cloudformation-exercise-1-vpc)
     - [CloudFormation Exercise 2: EC2](#cloudformation-exercise-2-ec2)
     - [CloudFormation: S3 (Extra)](#cloudformation-s3-extra)
+    - [CloudFormation: EKS (Extra)](#cloudformation-eks-extra)
     - [CloudFormation: Dependencies, Conditions, Mappings (Extra)](#cloudformation-dependencies-conditions-mappings-extra)
     - [CodePipeline](#codepipeline)
     - [CodeBuild](#codebuild)
@@ -1994,8 +1999,8 @@ This section uses the repository [cd0157-Server-Deployment-and-Containerization]
 
   ```powershell
   # Login
-  #$env:PATH = "C:\Program Files\Amazon\AWSCLIV2;" + $env:PATH
-  #$env:AWS_PROFILE = "deployment-course"
+  $env:PATH = "C:\Program Files\Amazon\AWSCLIV2;" + $env:PATH
+  $env:AWS_PROFILE = "deployment-course"
   aws sso login --profile deployment-course
 
   # Create Cluster + Nodegroup (this takes some minutes)
@@ -2144,6 +2149,128 @@ For the authoritative field definitions, see the Kubernetes documentation for [D
 
 ### CloudFormation: Introduction
 
+CloudFormation is AWS's infrastructure-as-code service: you describe the resources you want in a template, and CloudFormation creates and manages those resources for you. The [video introduction](https://youtu.be/Omppm_YUG2g) covers the same basic idea.
+
+- You can work with CloudFormation through the AWS CLI or the web console.
+- A template is useful when you need to create the same set of cloud resources repeatedly or at scale. You can save the template, edit it, and use it to create or update resources consistently.
+- A template does not prevent you from managing its AWS resources individually, but making changes outside CloudFormation can make the live resources differ from the template. Treat the template as the main record of the intended configuration.
+
+#### What is a CloudFormation template?
+
+A CloudFormation template is a [YAML or JSON document](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/template-formats.html) that declares the AWS resources you want CloudFormation to create, update, or delete as a group.
+
+- Each resource declaration has a logical name, a resource type, and the properties that configure that resource.
+- Property names and allowed values vary by resource type. An IAM role and an S3 bucket, for example, have different properties.
+- The following [`myFirstTemplate.yaml`](./assets/myFirstTemplate.yaml) example declares a VPC with the IPv4 range `10.0.0.0/16`, which contains 65,536 IPv4 addresses:
+
+  ```yaml
+  AWSTemplateFormatVersion: '2010-09-09'
+  Description: Udacity - This template deploys a VPC
+  Resources:
+    myUdacityVPC:
+      Type: AWS::EC2::VPC
+      Properties:
+        CidrBlock: 10.0.0.0/16
+        EnableDnsHostnames: true
+  ```
+
+- In this example:
+  - `AWSTemplateFormatVersion` identifies the CloudFormation template format version.
+  - `Description` gives the template a short human-readable description.
+  - `Resources` is the section that declares the AWS resources CloudFormation will manage.
+  - `myUdacityVPC` is the logical ID used to refer to this VPC inside the template; AWS creates the actual VPC ID when it provisions the resource.
+  - `Type: AWS::EC2::VPC` identifies the resource as an Amazon Virtual Private Cloud (VPC).
+  - `Properties` contains the settings for the VPC.
+    - `CidrBlock` sets its IPv4 address range.
+    - `EnableDnsHostnames: true` enables DNS hostnames for supported instances in the VPC.
+- A VPC is an isolated virtual network in your AWS account. Its CIDR range supplies private addresses for resources such as databases, servers, load balancers, and Kubernetes nodes. The addresses are not directly reachable from the public internet just because they are in the VPC; routing, public addressing, and security rules determine connectivity.
+- YAML uses indentation to show which values belong to each section. Preserve the indentation when copying or editing a template, and check the resulting hierarchy before creating a stack.
+- Resource properties differ by resource type. Browse the [AWS resource and property reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-template-resource-type-ref.html) for the resources you need, including EC2, EKS, CodeBuild, and CodePipeline.
+
+#### What is a stack?
+
+- When CloudFormation runs a template through the CLI or web console, it creates or manages the collection of resources declared in that template. A stack might contain a VPC, EC2 instances, S3 buckets, IAM roles, or other AWS resources.
+- A **stack** is the unit CloudFormation tracks for that collection. You can create, update, and delete its resources together by operating on the stack.
+- See [AWS CloudFormation concepts](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/cfn-whatis-concepts.html) for the service's terminology and lifecycle.
+
+#### Create and manage a stack using the AWS CLI
+
+Assume the template is saved as `myFirstTemplate.yaml` in your current directory. Run these commands from that directory. They use the `deployment-course` profile and `eu-central-1` region; change these values if your setup differs.
+
+1. **Create the stack** named `myFirstTest` from the local template:
+
+   ```powershell
+   $env:PATH = "C:\Program Files\Amazon\AWSCLIV2;" + $env:PATH
+   $env:AWS_PROFILE = "deployment-course"
+   aws sso login --profile deployment-course
+
+   aws cloudformation create-stack `
+     --stack-name myFirstTest `
+     --region eu-central-1 `
+     --profile deployment-course `
+     --template-body file://assets/myFirstTemplate.yaml
+   ```
+
+   - `--stack-name` gives the stack its name.
+   - `--region` selects where AWS creates the resources.
+   - `--profile` selects the AWS CLI credentials to use.
+   - `--template-body file://...` tells the CLI to read the template from a local file.
+
+2. **Update the existing stack** after editing the template. The stack name and Region must identify the stack you created:
+
+   ```powershell
+   aws cloudformation update-stack `
+     --stack-name myFirstTest `
+     --region eu-central-1 `
+     --profile deployment-course `
+     --template-body file://assets/myFirstTemplate.yaml
+   ```
+
+3. **Check the stack's status and outputs:**
+
+   ```powershell
+   aws cloudformation describe-stacks `
+     --stack-name myFirstTest `
+     --region eu-central-1 `
+     --profile deployment-course
+   ```
+
+   `describe-stacks` shows stack-level information such as its status and outputs. To inspect the resources that belong to it, use:
+
+   ```powershell
+   aws cloudformation describe-stack-resources `
+     --stack-name myFirstTest `
+     --region eu-central-1 `
+     --profile deployment-course
+   ```
+
+4. **Delete the stack when the exercise is finished** so CloudFormation can remove its resources. Check for resources that have a retention policy or are otherwise retained, and delete those separately if appropriate.
+
+   ```powershell
+   aws cloudformation delete-stack `
+     --stack-name myFirstTest `
+     --region eu-central-1 `
+     --profile deployment-course
+   ```
+
+#### Create a stack using the web console
+
+You can perform the same exercise in the [CloudFormation console](https://console.aws.amazon.com/cloudformation/). Set the console to the same Region as the template's intended resources.
+
+1. On the **Stacks** page, choose **Create stack**, then **With new resources (standard)**.
+2. Under **Prerequisite – Prepare template**, choose **Choose an existing template**. Under **Specify template**, choose **Upload a template file** and select your template file.
+3. Choose **Next**, enter a stack name, and continue through **Specify stack details** and **Configure stack options**. The fields you must provide depend on the resources and parameters in your template; for this VPC example, accept the defaults.
+4. Review the settings and create the stack.
+
+![CloudFormation: Create Stack](./assets/cloud_formation_create_stack.png)
+
+5. When you have finished the exercise, delete the stack from the CloudFormation dashboard. Review the resources selected for deletion before confirming.
+
+![Delete the selected stack](./assets/cloudformation_delete_stack.png)
+
+Never store sensitive information, such as credentials, in a template file!
+
+
 ### CloudFormation: Template Sections
 
 ### CloudFormation Exercise 1: VPC
@@ -2151,6 +2278,8 @@ For the authoritative field definitions, see the Kubernetes documentation for [D
 ### CloudFormation Exercise 2: EC2
 
 ### CloudFormation: S3 (Extra)
+
+### CloudFormation: EKS (Extra)
 
 ### CloudFormation: Dependencies, Conditions, Mappings (Extra)
 
