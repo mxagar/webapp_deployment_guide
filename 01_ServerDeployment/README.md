@@ -129,7 +129,17 @@ Table of Contents:
       - [Additional information](#additional-information)
       - [Managing a pipeline with CloudFormation](#managing-a-pipeline-with-cloudformation)
     - [CodeBuild and Continuous Integration](#codebuild-and-continuous-integration)
+      - [Continuous integration](#continuous-integration)
+      - [AWS CodeBuild](#aws-codebuild)
+      - [Additional resources](#additional-resources)
+      - [Build instructions with `buildspec.yml`](#build-instructions-with-buildspecyml)
     - [CloudFormation Exercise 3: Pipeline](#cloudformation-exercise-3-pipeline)
+      - [Prerequisite](#prerequisite)
+      - [Part 1: Create the CloudFormation stack in the console](#part-1-create-the-cloudformation-stack-in-the-console)
+      - [Part 2: Fix and rerun the pipeline](#part-2-fix-and-rerun-the-pipeline)
+      - [Part 3: Review the CloudFormation template](#part-3-review-the-cloudformation-template)
+      - [Part 4: Clean up](#part-4-clean-up-1)
+      - [Alternate method: Create the stack with the AWS CLI](#alternate-method-create-the-stack-with-the-aws-cli)
     - [Final Pipeline: IAM Role for CodeBuild](#final-pipeline-iam-role-for-codebuild)
     - [Final Pipeline: Authorize CodeBuild Using EKS RBAC](#final-pipeline-authorize-codebuild-using-eks-rbac)
     - [Final Pipeline: Deploy to EKS Cluster](#final-pipeline-deploy-to-eks-cluster)
@@ -3398,6 +3408,127 @@ phases:
 
 
 ### CloudFormation Exercise 3: Pipeline
+
+This exercise brings CloudFormation, Amazon S3, CodePipeline, and CodeBuild together in a small pipeline that runs a buildspec from an S3 object.
+
+#### Prerequisite
+
+Use the already integrated [`udacity_server_deployment_exercises` submodule](./lab/udacity_server_deployment_exercises/); the files for this exercise are in `examples/Create_Pipeline/`.
+
+#### Part 1: Create the CloudFormation stack in the console
+
+- Open [`simple-pipeline-build.yml`](./lab/udacity_server_deployment_exercises/examples/Create_Pipeline/simple-pipeline-build.yml) from the submodule. It declares parameters and resources for a CodePipeline pipeline, a CodeBuild project, S3 buckets, and the IAM roles those services use.
+
+![Simple Pipeline Build](./assets/simple_pipeline_build.png)
+
+- In the AWS console, select `eu-central-1`, open CloudFormation, and choose **Create stack**. Choose **Template is ready**, then upload `simple-pipeline-build.yml`.
+
+![Screenshot showing how to create a stack using the CloudFormation service in the AWS web console](./assets/create_stack_new.png)
+
+![Screenshot showing the template options to use when creating a stack through the AWS web console as described above](./assets/create_stack_template.png)
+
+- On the stack details page, enter `simple-pipeline-build` as the stack name. The template provides two parameters: `SourceObjectKey` defaults to [`buildspec.yml.zip`](./lab/udacity_server_deployment_exercises/examples/Create_Pipeline/buildspec.yml.zip), and `CodeBuildDockerImage` selects the build environment image.
+
+![Screenshot showing the stack details to use when creating a stack through the AWS web console as described above](./assets/create_stack_details.png)
+
+- In **Configure stack options**, leave the IAM role unset for this exercise. CloudFormation then uses the permissions of the identity creating the stack.
+
+![Screenshot showing the permissions options to use when creating a stack through the AWS web console as described above](./assets/stack_options.png)
+
+- In the review step, acknowledge that the template may create IAM resources. It creates service roles for CodePipeline and CodeBuild.
+
+![Screenshot showing the acknowledgement box described above](./assets/acknowledge_warning.png)
+
+- Create the stack and wait for `CREATE_COMPLETE`. If creation fails, inspect the CloudFormation **Events** tab for the resource and error details.
+
+- **Warning**: The pipeline's first execution fails because the configured source object, `buildspec.yml.zip`, is not yet in the source bucket.
+
+#### Part 2: Fix and rerun the pipeline
+
+- Open the `simple-pipeline-build` pipeline in CodePipeline. Its first execution fails because the configured source object, `buildspec.yml.zip`, is not yet in the source bucket.
+
+![Screenshot showing the failed step described above](./assets/s3_events_pipeline.png)
+
+![Failed s3-events-pipeline](./assets/failure_details.png)
+
+- In S3, open the source bucket whose name begins with `simple-pipeline-build-sourcebucket` and upload `buildspec.yml.zip` from the integrated submodule. The ZIP contains this `buildspec.yml`:
+
+```yaml
+version: 0.2
+phases:
+  build:
+    commands:
+      - echo Hello from CodeBuild!
+```
+
+- Keep the other upload options at their defaults.
+
+![Screenshot showing the bucket to choose, simple-pipeline-build-sourcebucket](./assets/choose_bucket.png)
+
+![Screenshot showing the successful upload of the zip file to the chosen bucket](./assets/zip_uploaded_bucket.png)
+
+- Return to CodePipeline and choose **Retry**. The template sets `PollForSourceChanges: false`, so uploading the object does not automatically start another execution. After retrying, the **Source** and **Build** actions should succeed.
+
+![Screenshot showing the successful pipeline](./assets/successful_pipeline.png)
+
+- The successful execution has two action categories:
+
+| Action category | Action provider | What it does in this exercise |
+| --- | --- | --- |
+| Source | [Amazon S3](https://docs.aws.amazon.com/codepipeline/latest/userguide/action-reference-S3.html) | Reads the configured S3 bucket and object key and produces the source artifact. This template disables polling, so the exercise starts the next run manually. |
+| Build | [AWS CodeBuild](https://docs.aws.amazon.com/codepipeline/latest/userguide/action-reference-CodeBuild.html) | Runs the commands from the buildspec in the CodeBuild build environment. |
+
+See the AWS guide to [valid action providers by action type](https://docs.aws.amazon.com/codepipeline/latest/userguide/reference-pipeline-structure.html). For automated S3 change detection, configure an event-based trigger; AWS recommends event-based detection instead of polling. See [S3 source action change detection](https://docs.aws.amazon.com/codepipeline/latest/userguide/action-reference-S3.html#action-reference-S3-polling).
+
+#### Part 3: Review the CloudFormation template
+
+- `SourceObjectKey` is the object key the S3 source action reads; in this example, its default is `buildspec.yml.zip`.
+- `CodeBuildDockerImage` selects the container image for the CodeBuild build environment. The template defaults to `aws/codebuild/standard:8.0`, CodeBuild's Ubuntu 24.04 x86-64 standard image. See the current [CodeBuild image list](https://docs.aws.amazon.com/codebuild/latest/userguide/build-env-ref-available.html).
+- The template defines these resources:
+
+| Logical ID | CloudFormation resource type | Purpose |
+| --- | --- | --- |
+| `SourceBucket` | `AWS::S3::Bucket` | Holds the source ZIP object. |
+| `CodePipelineArtifactStoreBucket` | `AWS::S3::Bucket` | Stores artifacts passed between pipeline actions. |
+| `CodePipelineArtifactStoreBucketPolicy` | `AWS::S3::BucketPolicy` | Applies security rules to the artifact bucket. |
+| `CodePipelineServiceRole` | `AWS::IAM::Role` | Grants CodePipeline permission to access its source/artifacts and start the build. |
+| `AppPipeline` | `AWS::CodePipeline::Pipeline` | Defines the source and build stages. |
+| `CodeBuildProject` | `AWS::CodeBuild::Project` | Defines the build environment and buildspec execution. |
+| `CodeBuildServiceRole` | `AWS::IAM::Role` | Grants CodeBuild the permissions needed for its build. |
+
+CloudFormation does not create resources in the order they appear in the template. It derives dependencies from references such as `!Ref` and `!GetAtt`, and can create independent resources in parallel; `DependsOn` adds an explicit ordering requirement.
+
+#### Part 4: Clean up
+
+- Empty both S3 buckets whose names begin with `simple-pipeline-build` before deleting the stack. Empty all object versions as well as current objects; CloudFormation cannot delete a non-empty bucket.
+- Delete the CloudFormation stack in the console. The stack removes the pipeline, build project, roles, bucket policy, and the now-empty buckets.
+
+**Reflection:** The buildspec in this exercise only runs an `echo` command. The goal is to follow the handoff from an S3 source artifact to a CodeBuild action and its output artifact, not to build a full application.
+
+#### Alternate method: Create the stack with the AWS CLI
+
+Run the command from `examples/Create_Pipeline/`, where `simple-pipeline-build.yml` is located:
+
+```powershell
+cd lab/udacity_server_deployment_exercises/examples/Create_Pipeline
+aws cloudformation create-stack `
+  --stack-name another-simple-pipeline-build `
+  --region eu-central-1 `
+  --template-body file://simple-pipeline-build.yml `
+  --capabilities CAPABILITY_IAM `
+  --profile deployment-course
+```
+
+`CAPABILITY_IAM` acknowledges that the template creates IAM roles. `CAPABILITY_NAMED_IAM` is needed when a template assigns custom names to IAM resources; this sample does not.
+
+Before deleting the stack, empty both S3 buckets and all their object versions. Then run:
+
+```powershell
+aws cloudformation delete-stack `
+  --stack-name another-simple-pipeline-build `
+  --region eu-central-1 `
+  --profile deployment-course
+```
 
 ### Final Pipeline: IAM Role for CodeBuild
 
