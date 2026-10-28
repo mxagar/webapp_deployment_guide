@@ -140,7 +140,12 @@ Table of Contents:
       - [Part 3: Review the CloudFormation template](#part-3-review-the-cloudformation-template)
       - [Part 4: Clean up](#part-4-clean-up-1)
       - [Alternate method: Create the stack with the AWS CLI](#alternate-method-create-the-stack-with-the-aws-cli)
-    - [Final Pipeline: IAM Role for CodeBuild](#final-pipeline-iam-role-for-codebuild)
+    - [Final Pipeline: Exercise Overview](#final-pipeline-exercise-overview)
+    - [Final Pipeline: Get the Repository and Create the EKS Cluster](#final-pipeline-get-the-repository-and-create-the-eks-cluster)
+      - [EKS cluster](#eks-cluster)
+    - [Final Pipeline: Create an IAM Role for CodeBuild](#final-pipeline-create-an-iam-role-for-codebuild)
+      - [Prepare the trust and permissions policies](#prepare-the-trust-and-permissions-policies)
+      - [Create the role and attach its policy](#create-the-role-and-attach-its-policy)
     - [Final Pipeline: Authorize CodeBuild Using EKS RBAC](#final-pipeline-authorize-codebuild-using-eks-rbac)
     - [Final Pipeline: Deploy to EKS Cluster](#final-pipeline-deploy-to-eks-cluster)
   - [Project: Deploy Your Flask App to Kubernetes Using EKS](#project-deploy-your-flask-app-to-kubernetes-using-eks)
@@ -3566,7 +3571,118 @@ aws cloudformation delete-stack `
   --profile deployment-course
 ```
 
-### Final Pipeline: IAM Role for CodeBuild
+### Final Pipeline: Exercise Overview
+
+- This exercise connects AWS CodePipeline, CodeBuild, Amazon ECR, and an existing Amazon EKS cluster. A commit to the configured GitHub repository starts a pipeline that builds a Docker image, pushes it to ECR, and deploys the application to EKS with `kubectl`.
+- The work has two phases:
+  1. **Preparation:** use the application repository, ensure an EKS cluster is available, create a role for CodeBuild, and authorize that role in Kubernetes.
+  2. **Deployment:** configure GitHub access, create the pipeline resources from a CloudFormation template, then trigger a build by committing a change.
+
+![Final Pipeline Overview](./assets/final_pipeline_overview.png)
+
+Unlike the previous pipeline exercise, which only ran an `echo` command, this buildspec installs tools, builds and pushes a container image, and applies a Kubernetes deployment.
+
+### Final Pipeline: Get the Repository and Create the EKS Cluster
+
+Use the code in [lab/udacity_deployments_final_pipeline/](./lab/udacity_deployments_final_pipeline/), which is a submodule that points to the forked [starter repository](https://github.com/mxagar/udacity_deployments_final_pipeline).
+
+```bash
+# To add the submodule
+git submodule add https://github.com/mxagar/udacity_deployments_final_pipeline.git 01_ServerDeployment/lab/udacity_deployments_final_pipeline
+```
+
+#### EKS cluster
+
+- Reuse the `eksctl-demo` cluster from the earlier EKS exercise if it is still available and has Ready worker nodes. The CloudFormation pipeline template defaults to the cluster name `eksctl-demo`; update that parameter if you use a different name.
+- If you do not already have a suitable cluster, sign in with the configured AWS IAM Identity Center profile and select it for `eksctl` in this PowerShell session:
+
+```powershell
+aws sso login --profile deployment-course
+$env:AWS_PROFILE = "deployment-course"
+```
+
+- Create a two-node cluster in `eu-central-1`. This leaves the Kubernetes version unspecified so `eksctl` can select its current supported default.
+
+```powershell
+eksctl create cluster `
+  --name eksctl-demo `
+  --region eu-central-1 `
+  --nodes 2 `
+  --instance-types t3.medium
+```
+
+- `eksctl` writes cluster access details to your kubeconfig. Verify the selected context and that the nodes are Ready:
+
+```powershell
+kubectl config current-context
+kubectl get nodes -o wide
+```
+
+- Creating an EKS cluster and its EC2 worker nodes incurs AWS charges. Reuse the earlier cluster when possible, and delete a newly created exercise cluster when you no longer need it.
+
+### Final Pipeline: Create an IAM Role for CodeBuild
+
+CodeBuild needs AWS credentials to describe the EKS cluster and retrieve the configured Systems Manager (SSM) parameters. The role's **trust policy** controls who can assume it; its **permissions policy** controls which AWS actions it can perform. This AWS authentication is separate from the Kubernetes authorization configured in the next section.
+
+#### Prepare the trust and permissions policies
+
+Run these commands from the final pipeline repository [lab/udacity_deployments_final_pipeline/](./lab/udacity_deployments_final_pipeline/), which contains `trust.json` and `iam-role-policy.json`:
+
+```powershell
+# Get the AWS account ID for the current profile
+aws sts get-caller-identity `
+  --query Account `
+  --output text `
+  --profile deployment-course
+```
+
+Replace the account ID in `trust.json` with the value returned above. The sample trust policy uses the AWS account principal:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::<ACCOUNT_ID>:root"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+```
+
+Here, `arn:aws:iam::<ACCOUNT_ID>:root` identifies the AWS account as a principal; it does not mean you must sign in as the root user. The pipeline's CloudFormation template later adds its CodeBuild service role to this role's trust policy. The provided `iam-role-policy.json` grants `eks:Describe*` and `ssm:GetParameters` for this exercise.
+
+#### Create the role and attach its policy
+
+Create the role using the trust policy. The command prints the new role's Amazon Resource Name (ARN):
+
+```powershell
+cd 01_ServerDeployment/lab/udacity_deployments_final_pipeline
+aws iam create-role `
+  --role-name UdacityFlaskDeployCBKubectlRole `
+  --assume-role-policy-document file://trust.json `
+  --query 'Role.Arn' `
+  --output text `
+  --profile deployment-course
+```
+
+Attach the permissions policy from the repository:
+
+```powershell
+cd 01_ServerDeployment/lab/udacity_deployments_final_pipeline
+aws iam put-role-policy `
+  --role-name UdacityFlaskDeployCBKubectlRole `
+  --policy-name eks-describe `
+  --policy-document file://iam-role-policy.json `
+  --profile deployment-course
+```
+
+- `create-role` creates the IAM role and trust relationship; `put-role-policy` attaches the inline permissions policy.
+- If `create-role` reports `EntityAlreadyExists`, inspect the existing role with `aws iam get-role --role-name UdacityFlaskDeployCBKubectlRole --profile deployment-course`. Reuse or update it only if it is the exercise role; do not delete an unfamiliar role just to retry.
+- The role ARN is used in the next step to grant Kubernetes access. Creating the IAM role alone does not authorize it to perform actions inside the EKS cluster.
 
 ### Final Pipeline: Authorize CodeBuild Using EKS RBAC
 
