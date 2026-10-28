@@ -3411,6 +3411,24 @@ phases:
 
 This exercise brings CloudFormation, Amazon S3, CodePipeline, and CodeBuild together in a small pipeline that runs a buildspec from an S3 object.
 
+Log in using AWS SSO:
+
+```text
+https://<your-portal>.awsapps.com/start
+Account > AdministratorAccess > Open AWS Console
+```
+
+To log in to AWS using the CLI with SSO, run the following commands:
+
+```bash
+# In the Terminal, for AWS CLI:
+$env:PATH = "C:\Program Files\Amazon\AWSCLIV2;" + $env:PATH
+aws sso login --profile deployment-course
+# Repeat the login command when the SSO session expires
+# To log out:
+# aws sso logout
+```
+
 #### Prerequisite
 
 Use the already integrated [`udacity_server_deployment_exercises` submodule](./lab/udacity_server_deployment_exercises/); the files for this exercise are in `examples/Create_Pipeline/`.
@@ -3441,17 +3459,17 @@ Use the already integrated [`udacity_server_deployment_exercises` submodule](./l
 
 - Create the stack and wait for `CREATE_COMPLETE`. If creation fails, inspect the CloudFormation **Events** tab for the resource and error details.
 
-- **Warning**: The pipeline's first execution fails because the configured source object, `buildspec.yml.zip`, is not yet in the source bucket.
+- Now, go to the `CodePipeline` service in the AWS console; we should find the `s3-events-pipeline`. The pipeline's first execution fails because the configured source object, `buildspec.yml.zip`, is not yet in the source bucket. We're going to fix it in the next subsection.
 
 #### Part 2: Fix and rerun the pipeline
 
-- Open the `simple-pipeline-build` pipeline in CodePipeline. Its first execution fails because the configured source object, `buildspec.yml.zip`, is not yet in the source bucket.
+- Open the `s3-events-pipeline` pipeline in `CodePipeline` (`AWS Console > CodePipeline`). Its first execution fails because the configured source object, `buildspec.yml.zip`, is not yet in the source bucket created by the CloudFormation stack.
 
 ![Screenshot showing the failed step described above](./assets/s3_events_pipeline.png)
 
 ![Failed s3-events-pipeline](./assets/failure_details.png)
 
-- In S3, open the source bucket whose name begins with `simple-pipeline-build-sourcebucket` and upload `buildspec.yml.zip` from the integrated submodule. The ZIP contains this `buildspec.yml`:
+- In S3 (`AWS Console > S3`), open the source bucket whose name begins with `simple-pipeline-build-sourcebucket` and upload `buildspec.yml.zip` from the integrated submodule. The ZIP contains this `buildspec.yml`:
 
 ```yaml
 version: 0.2
@@ -3471,6 +3489,8 @@ phases:
 
 ![Screenshot showing the successful pipeline](./assets/successful_pipeline.png)
 
+- If we click on the AWS Build stage and go to the container logs, we should see the `Hello from CodeBuild!` message.
+
 - The successful execution has two action categories:
 
 | Action category | Action provider | What it does in this exercise |
@@ -3478,13 +3498,29 @@ phases:
 | Source | [Amazon S3](https://docs.aws.amazon.com/codepipeline/latest/userguide/action-reference-S3.html) | Reads the configured S3 bucket and object key and produces the source artifact. This template disables polling, so the exercise starts the next run manually. |
 | Build | [AWS CodeBuild](https://docs.aws.amazon.com/codepipeline/latest/userguide/action-reference-CodeBuild.html) | Runs the commands from the buildspec in the CodeBuild build environment. |
 
+Note that no Ubuntu image is being built. The CodeBuild project uses the specified Docker image (`aws/codebuild/standard:8.0`) as its build environment, which is based on Ubuntu 24.04 x86-64. The `buildspec.yml` file tells that environment which commands to run. Here, it contains just one command: 
+
+```bash
+echo Hello from CodeBuild!
+```
+
+The pipeline `s3-events-pipeline` is defined in [`simple-pipeline-build.yml`](/E:/git_repositories/webapp_deployment_guide/01_ServerDeployment/lab/udacity_server_deployment_exercises/examples/Create_Pipeline/simple-pipeline-build.yml:126), in `AppPipeline`. It has two stages:
+
+1. **Source:** The S3 action reads the object key specified by the `SourceObjectKey` (parameter `buildspec.yml.zip` by default) from `SourceBucket`. It produces the `SourceOutput` artifact. The template sets `PollForSourceChanges: false`, so uploading the ZIP doesn't automatically trigger a run.
+2. **Build:** The CodeBuild action receives `SourceOutput`, runs the project's `buildspec.yml` commands, and produces `BuildOutput`. CodePipeline stores that `BuildOutput` artifact in the pipeline's configured artifact store, which is the `CodePipelineArtifactStoreBucket` resource: this is the other generated S3 bucket, which starts with `simple-pipeline-build-`. In this case, the stored artiact is a ZIP which contains the `buildspec.yml` file.
+
+The pipeline and its connected resources, including the buckets, build project, and IAM roles, are all defined in that CloudFormation template.
+
 See the AWS guide to [valid action providers by action type](https://docs.aws.amazon.com/codepipeline/latest/userguide/reference-pipeline-structure.html). For automated S3 change detection, configure an event-based trigger; AWS recommends event-based detection instead of polling. See [S3 source action change detection](https://docs.aws.amazon.com/codepipeline/latest/userguide/action-reference-S3.html#action-reference-S3-polling).
 
 #### Part 3: Review the CloudFormation template
 
+There are two important parameters in `simple-pipeline-build.yml`:
+
 - `SourceObjectKey` is the object key the S3 source action reads; in this example, its default is `buildspec.yml.zip`.
 - `CodeBuildDockerImage` selects the container image for the CodeBuild build environment. The template defaults to `aws/codebuild/standard:8.0`, CodeBuild's Ubuntu 24.04 x86-64 standard image. See the current [CodeBuild image list](https://docs.aws.amazon.com/codebuild/latest/userguide/build-env-ref-available.html).
-- The template defines these resources:
+
+The template defines these resources:
 
 | Logical ID | CloudFormation resource type | Purpose |
 | --- | --- | --- |
