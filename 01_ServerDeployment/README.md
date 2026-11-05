@@ -3594,31 +3594,37 @@ git submodule add https://github.com/mxagar/udacity_deployments_final_pipeline.g
 #### EKS cluster
 
 - Reuse the `eksctl-demo` cluster from the earlier EKS exercise if it is still available and has Ready worker nodes. The CloudFormation pipeline template defaults to the cluster name `eksctl-demo`; update that parameter if you use a different name.
-- If you do not already have a suitable cluster, sign in with the configured AWS IAM Identity Center profile and select it for `eksctl` in this PowerShell session:
+- If you do not already have a suitable cluster, sign in with the configured AWS IAM Identity Center profile and select it for `eksctl` in this Bash session:
 
-```powershell
+```bash
 aws sso login --profile deployment-course
-$env:AWS_PROFILE = "deployment-course"
+export AWS_PROFILE="deployment-course"
 ```
 
 - Create a two-node cluster in `eu-central-1`. This leaves the Kubernetes version unspecified so `eksctl` can select its current supported default.
 
-```powershell
-eksctl create cluster `
-  --name eksctl-demo `
-  --region eu-central-1 `
-  --nodes 2 `
+```bash
+eksctl create cluster \
+  --name eksctl-demo \
+  --region eu-central-1 \
+  --nodes 2 \
   --instance-types t3.medium
 ```
 
 - `eksctl` writes cluster access details to your kubeconfig. Verify the selected context and that the nodes are Ready:
 
-```powershell
+```bash
 kubectl config current-context
 kubectl get nodes -o wide
 ```
 
 - Creating an EKS cluster and its EC2 worker nodes incurs AWS charges. Reuse the earlier cluster when possible, and delete a newly created exercise cluster when you no longer need it.
+- Recall the deletion command:
+
+
+```bash
+eksctl delete cluster --name eksctl-demo --region eu-central-1
+```
 
 ### Final Pipeline: Create an IAM Role for CodeBuild
 
@@ -3628,11 +3634,11 @@ CodeBuild needs AWS credentials to describe the EKS cluster and retrieve the con
 
 Run these commands from the final pipeline repository [lab/udacity_deployments_final_pipeline/](./lab/udacity_deployments_final_pipeline/), which contains `trust.json` and `iam-role-policy.json`:
 
-```powershell
+```bash
 # Get the AWS account ID for the current profile
-aws sts get-caller-identity `
-  --query Account `
-  --output text `
+aws sts get-caller-identity \
+  --query Account \
+  --output text \
   --profile deployment-course
 ```
 
@@ -3659,24 +3665,24 @@ Here, `arn:aws:iam::<ACCOUNT_ID>:root` identifies the AWS account as a principal
 
 Create the role using the trust policy. The command prints the new role's Amazon Resource Name (ARN):
 
-```powershell
+```bash
 cd 01_ServerDeployment/lab/udacity_deployments_final_pipeline
-aws iam create-role `
-  --role-name UdacityFlaskDeployCBKubectlRole `
-  --assume-role-policy-document file://trust.json `
-  --query 'Role.Arn' `
-  --output text `
+aws iam create-role \
+  --role-name UdacityFlaskDeployCBKubectlRole \
+  --assume-role-policy-document file://trust.json \
+  --query 'Role.Arn' \
+  --output text \
   --profile deployment-course
 ```
 
 Attach the permissions policy from the repository:
 
-```powershell
+```bash
 cd 01_ServerDeployment/lab/udacity_deployments_final_pipeline
-aws iam put-role-policy `
-  --role-name UdacityFlaskDeployCBKubectlRole `
-  --policy-name eks-describe `
-  --policy-document file://iam-role-policy.json `
+aws iam put-role-policy \
+  --role-name UdacityFlaskDeployCBKubectlRole \
+  --policy-name eks-describe \
+  --policy-document file://iam-role-policy.json \
   --profile deployment-course
 ```
 
