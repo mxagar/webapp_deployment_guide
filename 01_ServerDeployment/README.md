@@ -147,7 +147,18 @@ Table of Contents:
       - [Prepare the trust and permissions policies](#prepare-the-trust-and-permissions-policies)
       - [Create the role and attach its policy](#create-the-role-and-attach-its-policy)
     - [Final Pipeline: Authorize CodeBuild Using EKS RBAC](#final-pipeline-authorize-codebuild-using-eks-rbac)
+      - [1. Fetch the current ConfigMap](#1-fetch-the-current-configmap)
+      - [2. Add the CodeBuild role mapping](#2-add-the-codebuild-role-mapping)
+      - [3. Patch the cluster](#3-patch-the-cluster)
+      - [4. Handle a conflict](#4-handle-a-conflict)
     - [Final Pipeline: Deploy to EKS Cluster](#final-pipeline-deploy-to-eks-cluster)
+      - [1. Generate a GitHub access token](#1-generate-a-github-access-token)
+      - [2. Create CodePipeline and CodeBuild with CloudFormation](#2-create-codepipeline-and-codebuild-with-cloudformation)
+        - [2.1. Set the template parameters](#21-set-the-template-parameters)
+        - [2.2. Create the stack](#22-create-the-stack)
+      - [3. Understand `buildspec.yml`](#3-understand-buildspecyml)
+      - [4. Troubleshoot failed builds](#4-troubleshoot-failed-builds)
+      - [5. Trigger and verify the build](#5-trigger-and-verify-the-build)
   - [Project: Deploy Your Flask App to Kubernetes Using EKS](#project-deploy-your-flask-app-to-kubernetes-using-eks)
 
 ## Introduction
@@ -3614,8 +3625,11 @@ eksctl create cluster \
 - `eksctl` writes cluster access details to your kubeconfig. Verify the selected context and that the nodes are Ready:
 
 ```bash
-kubectl config current-context
+kubectl config current-context  # admin@eksctl-demo.eu-central-1.eksctl.io
 kubectl get nodes -o wide
+# NAME                                              STATUS   ROLES    AGE     VERSION
+# ip-<IP_ADDRESS_1>.eu-central-1.compute.internal   Ready    <none>   3m14s   v1.34.12-eks-6e7947a
+# ip-<IP_ADDRESS_2>.eu-central-1.compute.internal   Ready    <none>   3m13s   v1.34.12-eks-6e7947a
 ```
 
 - Creating an EKS cluster and its EC2 worker nodes incurs AWS charges. Reuse the earlier cluster when possible, and delete a newly created exercise cluster when you no longer need it.
@@ -3692,7 +3706,290 @@ aws iam put-role-policy \
 
 ### Final Pipeline: Authorize CodeBuild Using EKS RBAC
 
+We have 2 security systems:
+
+1. **AWS IAM:** Authenticates the AWS identity and controls access to AWS APIs.
+2. **Kubernetes RBAC:** Controls what that identity can do through the Kubernetes API.
+
+CodeBuild will assume the IAM role created in the previous section:
+
+```
+arn:aws:iam::<ACCOUNT_ID>:role/UdacityFlaskDeployCBKubectlRole
+```
+
+That role authenticates the AWS identity, but it does not by itself authorize requests to the Kubernetes API.
+
+Kubernetes authorization is handled by [role-based access control (RBAC)](https://kubernetes.io/docs/reference/access-authn-authz/rbac/): we assign the AWS IAM role to the Kubernetes `system:masters` group, which grants administrative privileges. The mapping is stored in the EKS cluster's [`aws-auth` ConfigMap](https://docs.aws.amazon.com/eks/latest/userguide/add-user-role.html#aws-auth-configmap).
+
+A Kubernetes `ConfigMap` is an object that stores non-secret configuration data inside a cluster.
+
+It usually contains key-value settings, for example:
+
+```yaml
+data:
+  environment: production
+  log_level: info
+```
+
+The EKS [`aws-auth` ConfigMap](https://docs.aws.amazon.com/eks/latest/userguide/add-user-role.html#aws-auth-configmap) is a special configuration object used to map AWS IAM identities to Kubernetes identities:
+
+```yaml
+data:
+  mapRoles: |
+    - groups:
+      - system:masters
+      rolearn: arn:aws:iam::<ACCOUNT_ID>:role/UdacityFlaskDeployCBKubectlRole
+      username: build
+```
+
+This tells EKS:
+
+> When this AWS IAM role connects, represent it inside Kubernetes as the user build, belonging to `system:masters`.
+
+Kubernetes RBAC then uses that group to decide what the identity can do.
+
+A `ConfigMap` is not a password store or a secret. It stores configuration that Kubernetes components and applications can read. In this course, `aws-auth` is being used as the bridge between AWS IAM roles and Kubernetes permissions.
+
+#### 1. Fetch the current ConfigMap
+
+Save the current `aws-auth` ConfigMap before editing it. On macOS/Linux, use `/tmp`:
+
+```bash
+kubectl get -n kube-system configmap/aws-auth -o yaml > /tmp/aws-auth-patch.yml
+```
+
+On Windows, save it in the current directory instead:
+
+```powershell
+kubectl get -n kube-system configmap/aws-auth -o yaml > aws-auth-patch.yml
+```
+
+#### 2. Add the CodeBuild role mapping
+
+Open the downloaded file with an editor. On macOS/Linux, for example:
+
+```bash
+code /tmp/aws-auth-patch.yml
+```
+
+Windows users can open `aws-auth-patch.yml` from the current directory.
+
+In the `data.mapRoles` section, add this role entry:
+
+```yaml
+    - groups:
+      - system:masters
+      rolearn: arn:aws:iam::<ACCOUNT_ID>:role/UdacityFlaskDeployCBKubectlRole
+      username: build
+```
+
+Replace `<ACCOUNT_ID>` with the account ID returned by the `aws sts get-caller-identity` command in the previous section. Keep the indentation exactly as shown; YAML indentation determines the structure of the `ConfigMap`.
+
+You can compare your edit with the [sample `aws-auth-patch.yml`](./lab/udacity_deployments_final_pipeline/aws-auth-patch.yml) and the image below:
+
+![AWS Auth Patch](./assets/aws-auth-patch.png)
+
+#### 3. Patch the cluster
+
+Apply the edited ConfigMap:
+
+```bash
+kubectl patch configmap/aws-auth -n kube-system --patch "$(cat /tmp/aws-auth-patch.yml)"
+```
+
+Windows users should use their local file path instead:
+
+```powershell
+kubectl patch configmap/aws-auth -n kube-system --patch "$(cat aws-auth-patch.yml)"
+```
+
+On success, the command reports:
+
+```text
+configmap/aws-auth patched
+```
+
+#### 4. Handle a conflict
+
+If the ConfigMap changed after you fetched it, Kubernetes returns:
+
+```text
+Error from server (Conflict): Operation cannot be fulfilled on configmaps "aws-auth": the object has been modified; please apply your changes to the latest version and try again
+```
+
+Repeat the fetch, edit, and patch steps so that your changes are based on the latest ConfigMap.
+
 ### Final Pipeline: Deploy to EKS Cluster
+
+This pipeline watches a GitHub repository. When you push a change, CodePipeline starts CodeBuild, which builds and pushes a Docker image and deploys the application to your EKS cluster.
+
+#### 1. Generate a GitHub access token
+
+Create a GitHub [personal access token](https://github.com/settings/tokens/) with access to the repository that CodePipeline will monitor. For this exercise, use the **full control of private repositories** scope if the repository is private, set an expiration (30 days is a reasonable learning-project choice), and save the token securely. GitHub shows the token only once; never commit it to the repository or place it in the CloudFormation template.
+
+The original exercise mentions granting an administrator scope as an alternative. That scope is broader than this pipeline needs; use the narrowest repository permissions that work.
+
+![Generate GitHub Access Token with full control of private repositories](./assets/github_access_token.png)
+
+The forked Github repository: [mxagar/udacity_deployments_final_pipeline](https://github.com/mxagar/udacity_deployments_final_pipeline).
+
+I saved the token in the `.env` file of the repo:
+
+```bash
+GITHUB_PERSONAL_ACCESS_TOKEN="xxx"
+```
+
+#### 2. Create CodePipeline and CodeBuild with CloudFormation
+
+Use the provided [CloudFormation template](./lab/udacity_deployments_final_pipeline/ci-cd-codepipeline.cfn.yml). Its **Parameters** section configures the GitHub source, CodeBuild, the EKS cluster, and the IAM role created earlier.
+
+##### 2.1. Set the template parameters
+
+Open the template [`ci-cd-codepipeline.cfn.yml`](./lab/udacity_deployments_final_pipeline/ci-cd-codepipeline.cfn.yml) and review/update these values:
+
+| Parameter | Value or guidance |
+| --- | --- |
+| `EksClusterName` | `eksctl-demo`, or the name of your existing EKS cluster |
+| `GitSourceRepo` | The GitHub repository containing the application, `Dockerfile`, and `buildspec.yml` |
+| `GitBranch` | `main`, or the branch you want to monitor |
+| `GitHubUser` | Your GitHub username or organization |
+| `CodeBuildDockerImage` | Keep the template default unless you need another CodeBuild image |
+| `KubectlRoleName` | `UdacityFlaskDeployCBKubectlRole`, created in the previous section |
+| `GitHubToken` | Enter this only in the CloudFormation console; do not add it to the template |
+
+The template creates the following supporting resources:
+
+- **CodeBuild and CodePipeline resources and their IAM roles.**
+- An Amazon Elastic Container Registry (ECR) repository for the Docker image.
+- An Amazon Simple Storage Service (S3) bucket for pipeline artifacts.
+- Custom provisioning logic.
+- A Lambda function and its IAM role.
+
+The GitHub token is declared as a `NoEcho` parameter and is therefore masked in normal CloudFormation views. Still, do not store sensitive values in source control, template metadata, outputs, or resource identifiers.
+
+![Screenshot showing resources that will be created using the ci-cd-codepipeline.cfn.yml template](./assets/cicd_pipeline.png)
+
+These are the updated parameters in the template:
+
+```yaml
+Parameters:
+
+  EksClusterName:
+    Type: String
+    Description: The name of the EKS cluster created
+    Default: eksctl-demo
+    MinLength: 1
+    MaxLength: 100
+    ConstraintDescription: You must enter the EKS cluster name
+
+  GitSourceRepo:
+    Type: String
+    Description: The GitHub source repository - must contain a Dockerfile and buildspec.yml in the base
+    Default: udacity_deployments_final_pipeline
+    MinLength: 1
+    MaxLength: 100
+    ConstraintDescription: You must enter a GitHub repository name
+
+  GitBranch:
+    Type: String
+    Default: main
+    Description: GitHub git repository branch - change triggers a new build
+    MinLength: 1
+    MaxLength: 100
+    ConstraintDescription: You must enter a GitHub repository branch name
+
+  GitHubToken:
+    Type: String
+    NoEcho: true
+    Description: GitHub API token -- see https://github.com/blog/1509-personal-api-tokens
+    MinLength: 3
+    MaxLength: 100
+    ConstraintDescription: You must enter a GitHub personal access token (not here, but in CloudFormation)
+
+  GitHubUser:
+    Type: String
+    Default: mxagar
+    Description: GitHub username or organization
+    MinLength: 3
+    MaxLength: 100
+    ConstraintDescription: You must enter a GitHub username or organization
+
+  CodeBuildDockerImage:
+    Type: String
+    Default: aws/codebuild/standard:8.0
+    Description: AWS CodeBuild Docker optimized image
+    MinLength: 3
+    MaxLength: 100
+    ConstraintDescription: You must enter a CodeBuild Docker image
+
+  KubectlRoleName:
+    Type: String
+    Default: UdacityFlaskDeployCBKubectlRole
+    Description: IAM role used by kubectl to interact with EKS cluster
+    MinLength: 3
+    MaxLength: 100
+    ConstraintDescription: You must enter a kubectl IAM role
+```
+
+##### 2.2. Create the stack
+
+In the AWS CloudFormation console:
+
+1. Choose **Create stack** -> **With new resources (standard)**.
+2. Under **Specify template**, choose **Template is ready** and **Upload a template file**, then upload `ci-cd-codepipeline.cfn.yml`.
+3. Under **Specify stack details**, choose a stack name such as `my-final-exercise-stack`. Confirm the GitHub username, repository, branch, EKS cluster name, CodeBuild image, and IAM role. Paste the GitHub token into the `GitHubToken` parameter.
+4. Choose **Next** through the stack options, review the parameters, acknowledge any required IAM-resource capabilities, and choose **Create stack**.
+
+![Screenshot of Step 1 in creating the stack using the CloudFormation console](./assets/create_stack_final.jpeg)
+
+![Screenshot of Step 2, specifying the stack details using the CloudFormation console](./assets/create_stack_final_2.jpeg)
+
+![Screenshot of Step 3, configuring stack options and creating the stack](./assets/create_stack_final_3.jpeg)
+
+Leave the stack options at their defaults unless the exercise requires otherwise. Creation may take 5–15 minutes; monitor the chronological events in the CloudFormation console. If CloudFormation reports a `Template format error`, validate the YAML with a [YAML Validator](https://codebeautify.org/yaml-validator) or [YAML Lint](http://www.yamllint.com/).
+
+#### 3. Understand `buildspec.yml`
+
+CodeBuild reads `buildspec.yml` from the root of the GitHub source repository. The file defines the commands run in each build phase:
+
+- **`install`:** Starts Docker, downloads the AWS IAM Authenticator and `kubectl`, verifies the `kubectl` checksum, installs `jq` and the AWS CLI, and adds the tools to `PATH`.
+- **`pre_build`:** Creates an image tag, replaces the placeholder image in `deployment.yml`, logs in to ECR, and sets `KUBECONFIG`.
+- **`build`:** Builds the Docker image.
+- **`post_build`:** Pushes the image to ECR, updates kubeconfig for the EKS cluster using the configured IAM role, applies `deployment.yml`, and writes `build.json` as the pipeline artifact.
+
+Use a `kubectl` version within one minor version of the EKS control plane. The current buildspec pins `kubectl` to `v1.23.6`; update that pin if it does not match your cluster. CodeBuild runs these commands inside a Linux container, so select a Linux-compatible version. The CodeBuild logs show the commands from each phase in execution order.
+
+#### 4. Troubleshoot failed builds
+
+Check the CodePipeline source stage first, then open the CodeBuild project and inspect its logs. Common failures from this exercise are:
+
+- **Resource not found around `aws eks update-kubeconfig`:** The EKS cluster and the CodePipeline/CodeBuild resources were created in different regions. Either create the cluster in the pipeline's region or update the build configuration so the EKS commands explicitly target the cluster's region. The cluster and pipeline resources must be aligned with the region used by the build commands.
+- **`You must be logged in to the server (the server has asked for the client to provide credentials)`:** CodeBuild could not authenticate or authorize against Kubernetes. Verify the CloudFormation parameters, the IAM role name, and the `aws-auth` mapping, then repeat the fetch, edit, and patch procedure in the previous section using a fresh ConfigMap.
+- **`ArtifactsOverride must be set when using artifacts type CodePipelines`:** Do not start CodeBuild manually; this project expects the artifact supplied by CodePipeline. Check the parameters in **CloudFormation -> your stack -> Parameters**, then trigger the pipeline through its source stage.
+
+#### 5. Trigger and verify the build
+
+Push a commit to the configured branch to trigger CodePipeline automatically:
+
+```bash
+# Verify that the remote points to your repository, not the original Udacity repository.
+# Fork the repository and clone your fork if necessary.
+git remote -v
+git status
+git add <filename>
+git commit -m "Describe the change"
+git push
+```
+
+In the AWS console, open the [CodePipeline dashboard](https://console.aws.amazon.com/codesuite/codepipeline/start?region=us-east-2). The source stage should complete first, followed by the build stage. Confirm that the pipeline succeeds; adjust the dashboard region if your stack was created elsewhere.
+
+To test the deployed application, get the service's external address:
+
+```bash
+kubectl get services simple-flask-deployment -o wide
+```
+
+Open the `EXTERNAL-IP` value for `simple-flask-deployment` in a browser.
 
 ## Project: Deploy Your Flask App to Kubernetes Using EKS
 
