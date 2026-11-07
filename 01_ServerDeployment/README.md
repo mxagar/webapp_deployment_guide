@@ -159,6 +159,7 @@ Table of Contents:
       - [3. Understand `buildspec.yml`](#3-understand-buildspecyml)
       - [4. Troubleshoot failed builds](#4-troubleshoot-failed-builds)
       - [5. Trigger and verify the build](#5-trigger-and-verify-the-build)
+    - [Final Pipeline: Clean up](#final-pipeline-clean-up)
   - [Project: Deploy Your Flask App to Kubernetes Using EKS](#project-deploy-your-flask-app-to-kubernetes-using-eks)
 
 ## Introduction
@@ -3962,7 +3963,60 @@ Leave the stack options at their defaults unless the exercise requires otherwise
 
 #### 3. Understand `buildspec.yml`
 
-CodeBuild reads `buildspec.yml` from the root of the GitHub source repository. The file defines the commands run in each build phase:
+CodeBuild reads `buildspec.yml` from the root of the GitHub source repository:
+
+```yaml
+version: 0.2
+
+env:
+  shell: bash
+  variables:
+    # Match the EKS control plane minor version; this exercise uses Kubernetes 1.34.
+    KUBECTL_VERSION: v1.34.13
+
+phases:
+  install:
+    runtime-versions:
+      python: "3.13"
+    commands:
+      - |
+        if ! docker info >/dev/null 2>&1; then
+          nohup /usr/local/bin/dockerd --host=unix:///var/run/docker.sock --storage-driver=overlay2 &
+          timeout 30 sh -c 'until docker info >/dev/null 2>&1; do sleep 1; done'
+        fi
+      - curl -fsSL https://astral.sh/uv/0.13.5/install.sh -o /tmp/install-uv.sh
+      - UV_INSTALL_DIR=/usr/local/bin UV_NO_MODIFY_PATH=1 sh /tmp/install-uv.sh
+      - uv sync --locked --no-dev
+      - curl -fsSL -o kubectl "https://dl.k8s.io/release/$KUBECTL_VERSION/bin/linux/amd64/kubectl"
+      - curl -fsSL -o kubectl.sha256 "https://dl.k8s.io/release/$KUBECTL_VERSION/bin/linux/amd64/kubectl.sha256"
+      - echo "$(cat kubectl.sha256)  kubectl" | sha256sum --check
+      - chmod +x kubectl
+      - export PATH="$PWD:$PATH"
+      - kubectl version --client
+      - aws --version
+  pre_build:
+    commands:
+      - TAG="$REPOSITORY_NAME.$REPOSITORY_BRANCH.${ENVIRONMENT_NAME:-test}.$(date +%Y-%m-%d.%H.%M.%S).$(echo "$CODEBUILD_RESOLVED_SOURCE_VERSION" | head -c 8)"
+      - sed -i 's@CONTAINER_IMAGE@'"$REPOSITORY_URI:$TAG"'@' deployment.yml
+      - aws ecr get-login-password --region "$AWS_DEFAULT_REGION" | docker login --username AWS --password-stdin "${REPOSITORY_URI%%/*}"
+      - export KUBECONFIG="$HOME/.kube/config"
+  build:
+    commands:
+      - docker build --tag "$REPOSITORY_URI:$TAG" .
+  post_build:
+    commands:
+      - test "$CODEBUILD_BUILD_SUCCEEDING" = "1"
+      - docker push "$REPOSITORY_URI:$TAG"
+      - aws eks update-kubeconfig --region "$AWS_DEFAULT_REGION" --name "$EKS_CLUSTER_NAME" --role-arn "$EKS_KUBECTL_ROLE_ARN"
+      - kubectl apply -f deployment.yml
+      - printf '[{"name":"eksctl-demo","imageUri":"%s"}]' "$REPOSITORY_URI:$TAG" > build.json
+
+artifacts:
+  files: build.json
+
+```
+
+The file defines the commands run in each build phase:
 
 - **`install`:** Uses Python 3.13, starts Docker if needed, installs uv 0.13.5, synchronizes the application dependencies from `uv.lock`, downloads and checksum-verifies `kubectl`, and checks the preinstalled AWS CLI v2.
 - **`pre_build`:** Creates an image tag, replaces the placeholder image in `deployment.yml`, logs in to ECR, and sets `KUBECONFIG`.
@@ -3970,6 +4024,43 @@ CodeBuild reads `buildspec.yml` from the root of the GitHub source repository. T
 - **`post_build`:** Pushes the image to ECR, updates kubeconfig for the EKS cluster using the configured IAM role, applies `deployment.yml`, and writes `build.json` as the pipeline artifact.
 
 Use a `kubectl` version within one minor version of the EKS control plane. The current buildspec pins `kubectl` to `v1.34.13`; update that pin if it does not match your cluster. CodeBuild runs these commands inside a Linux container, so select a Linux-compatible version. The CodeBuild logs show the commands from each phase in execution order.
+
+The `deployment.yml` file contains a placeholder for the container image. The `pre_build` phase replaces that placeholder with the ECR image URI and tag. Applying the `deployment.yml` file means we deploy the app to the Kubernetes cluster; the deployment is named `simple-flask-deployment`:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: simple-flask-deployment
+  labels:
+    app: simple-flask
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: simple-flask
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 2
+      maxSurge: 2
+  template:
+    metadata:
+      labels:
+        app: simple-flask
+    spec:
+      containers:
+      - name: simple-flask
+        # image: IMAGE_TAG
+        image: CONTAINER_IMAGE
+        securityContext:
+          privileged: false
+          readOnlyRootFilesystem: false
+          allowPrivilegeEscalation: false
+        ports:
+          - containerPort: 8080
+
+```
 
 #### 4. Troubleshoot failed builds
 
@@ -4009,6 +4100,102 @@ kubectl get services simple-flask-deployment -o wide
 ```
 
 Open the `EXTERNAL-IP` value for `simple-flask-deployment` in a browser.
+
+```text
+# Enter in browswer
+http://xxx.eu-central-1.elb.amazonaws.com
+
+# We should get a white page with this text:
+Hello, World from Flask!
+```
+
+### Final Pipeline: Clean up
+
+**Required to stop ongoing costs:** remove the pipeline, load balancer, EKS cluster and worker nodes, then any stored images, artifacts, and logs you no longer need. Compute and networking are the main priority; retained storage can also generate charges.
+
+**Optional housekeeping:** delete the manually created IAM role, remove obsolete access mappings, and revoke the exercise token. [IAM roles and policies have no direct charge](https://docs.aws.amazon.com/IAM/latest/UserGuide/getting-started.html), so you can keep the role for another exercise.
+
+Skip resources you have already deleted. If you deliberately keep the cluster or stored data for reuse, their applicable charges continue.
+
+#### Required: stop the pipeline
+
+Wait for running pipeline executions and builds to finish, and avoid further pushes during cleanup. Run the Bash blocks in the same terminal, adjusting these values if necessary:
+
+```bash
+export AWS_PROFILE="deployment-course"
+export AWS_DEFAULT_REGION="eu-central-1"
+STACK_NAME="my-final-exercise-stack"
+CLUSTER_NAME="eksctl-demo"
+EKS_PROFILE="default"
+```
+
+Before deleting the stack, open **CloudFormation -> your stack -> Resources** and record the physical names of:
+
+- `EcrDockerRepository`: the image repository.
+- `CodePipelineArtifactBucket`: the artifact bucket.
+- `CustomResourceLambda`: useful for identifying its logs later.
+
+Then delete the pipeline stack:
+
+```bash
+aws cloudformation delete-stack --stack-name "$STACK_NAME"
+aws cloudformation wait stack-delete-complete --stack-name "$STACK_NAME"
+```
+
+This removes CodePipeline, CodeBuild, the helper Lambda, and their stack-managed roles. **The cluster, manual IAM role, ECR repository, and S3 bucket remain.** If deletion fails, inspect the stack's **Events** before continuing.
+
+#### Required: delete the load balancer and cluster
+
+Use a profile with Kubernetes administrator access. In this lab, `default` has that access; `deployment-course` can manage AWS resources but its SSO identity is not authorized inside the cluster.
+
+```bash
+aws eks update-kubeconfig \
+  --name "$CLUSTER_NAME" \
+  --region "$AWS_DEFAULT_REGION" \
+  --profile "$EKS_PROFILE"
+kubectl get services --all-namespaces
+
+kubectl delete service simple-flask-deployment --namespace default --wait=true
+kubectl delete deployment simple-flask-deployment --namespace default --wait=true
+```
+
+Delete the Service **before the cluster**, so Kubernetes can release its load balancer. Verify its removal in **EC2 -> Load Balancers**. Remove any other exercise LoadBalancer Services or Ingresses too; preserve unrelated workloads. See the [EKS deletion prerequisites](https://docs.aws.amazon.com/eks/latest/userguide/delete-cluster.html).
+
+If you are finished with the cluster, delete it and its node groups using the same tool that created them:
+
+```bash
+AWS_PROFILE="$EKS_PROFILE" eksctl delete cluster \
+  --name "$CLUSTER_NAME" \
+  --region "$AWS_DEFAULT_REGION" \
+  --profile "$EKS_PROFILE" \
+  --wait
+```
+
+Keep the terminal running until deletion completes. Repeated `waiting for CloudFormation stack` messages are progress checks. Verify that the `eksctl-eksctl-demo-*` stacks finish deleting and their EC2 instances, EBS volumes, NAT gateways, and allocated public IP addresses are released.
+
+If you get `cannot list Kubernetes Services: Unauthorized`, check `EKS_PROFILE`: AWS permissions alone do not grant Kubernetes access. A kubeconfig-update message does not mean deletion completed.
+
+#### Required for no remaining storage costs: remove retained data
+
+The template uses [`DeletionPolicy: Retain`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-attribute-deletionpolicy.html) for ECR and S3. Delete their contents separately using the resource names recorded above:
+
+- **ECR -> Private repositories:** select the exercise repository and delete it, including its images.
+- **S3:** select the artifact bucket, choose **Empty**, then **Delete**. The console's [Empty operation](https://docs.aws.amazon.com/AmazonS3/latest/userguide/empty-bucket.html) removes all object versions and delete markers; `aws s3 rm --recursive` alone does not empty a versioned bucket.
+- **CloudWatch -> Logs -> Log groups:** delete `/aws/codebuild/my-final-exercise-stack`, `/aws/lambda/<recorded-function-name>`, and any exercise EKS control-plane log group you enabled. These groups can survive stack deletion. Keep them only if you still need the logs and accept their storage charges.
+
+#### Optional: remove unused access and credentials
+
+You can keep `UdacityFlaskDeployCBKubectlRole` and its policy for reuse without a direct IAM charge. If you no longer need the role and no other pipeline uses it:
+
+```bash
+aws iam delete-role-policy \
+  --role-name UdacityFlaskDeployCBKubectlRole --policy-name eks-describe
+aws iam delete-role --role-name UdacityFlaskDeployCBKubectlRole
+```
+
+If you remove the role but **keep the cluster**, first remove only that role's entry from `data.mapRoles` with `kubectl edit configmap aws-auth --namespace kube-system`. Preserve node-role mappings and other entries. If the cluster was deleted, its mapping is already gone.
+
+Finally, revoke the GitHub token and remove it from your local `.env` if you created it solely for this exercise. These are security housekeeping steps, not cost-saving steps.
 
 ## Project: Deploy Your Flask App to Kubernetes Using EKS
 
