@@ -170,9 +170,31 @@ Table of Contents:
       - [Part 1: Run the application locally](#part-1-run-the-application-locally)
       - [Part 2: Deploy on AWS](#part-2-deploy-on-aws)
     - [Prerequisites and App Overview](#prerequisites-and-app-overview)
+      - [Prerequisites](#prerequisites-1)
+        - [Python and package management](#python-and-package-management)
+        - [Terminal and AWS tools](#terminal-and-aws-tools)
+      - [Initial setup](#initial-setup)
+        - [Project files](#project-files)
+      - [Flask application overview](#flask-application-overview)
     - [Part 1 A: Run the application locally](#part-1-a-run-the-application-locally)
+      - [1. Install the dependencies with uv](#1-install-the-dependencies-with-uv)
+      - [2. Configure the application's environment](#2-configure-the-applications-environment)
+      - [3. Start the development server and check its health](#3-start-the-development-server-and-check-its-health)
+      - [4. Install jq for the endpoint examples](#4-install-jq-for-the-endpoint-examples)
+      - [5. Call /auth and save the token](#5-call-auth-and-save-the-token)
+      - [6. Troubleshoot dependency or response errors](#6-troubleshoot-dependency-or-response-errors)
+      - [7. Call /contents with the token](#7-call-contents-with-the-token)
     - [Part 1 B: Containerizing and Running Locally](#part-1-b-containerizing-and-running-locally)
+      - [1. Verify the Dockerfile](#1-verify-the-dockerfile)
+      - [2. Store the container's environment settings](#2-store-the-containers-environment-settings)
+      - [3. Start Docker Desktop](#3-start-docker-desktop)
+      - [4. Build the image](#4-build-the-image)
+      - [5. Create and run the container](#5-create-and-run-the-container)
+      - [6. Check the endpoints](#6-check-the-endpoints)
     - [Part 2 A: Overview of the CD Pipeline](#part-2-a-overview-of-the-cd-pipeline)
+      - [1. Prepare the cluster and CodeBuild access](#1-prepare-the-cluster-and-codebuild-access)
+      - [2. Configure and deploy the pipeline](#2-configure-and-deploy-the-pipeline)
+      - [3. Add automated tests](#3-add-automated-tests)
     - [Part 2 B: Create EKS Cluster and IAM Role](#part-2-b-create-eks-cluster-and-iam-role)
     - [Part 2 C: Deployment to Kubernetes Using CodePipeline and CodeBuild](#part-2-c-deployment-to-kubernetes-using-codepipeline-and-codebuild)
     - [Part 2 D: Adding Tests to the Build](#part-2-d-adding-tests-to-the-build)
@@ -4255,13 +4277,660 @@ The diagram's numbered actions represent this flow:
 
 ### Prerequisites and App Overview
 
+#### Prerequisites
+
+Have the following tools and accounts ready:
+
+- [Docker Desktop](https://docs.docker.com/desktop/) for building and running containers.
+- [Git](https://git-scm.com/downloads) for version control.
+- A code editor, such as [Visual Studio Code](https://code.visualstudio.com/download).
+- An Amazon Web Services (AWS) account with Identity and Access Management (IAM) permissions to create the exercise resources.
+
+##### Python and package management
+
+**Recommended: Python 3.13, using the latest available 3.13 patch release.** It matches this guide's existing [course environment](./pyproject.toml), which requires `>=3.13,<3.14`, and has [security support through October 2029](https://devguide.python.org/versions/). Use the same Python minor version locally, in the Docker image, and in CodeBuild.
+
+The project starter has been updated from the course's Python 3.7–3.9 setup to Python 3.13, current Flask/PyJWT APIs, and uv. Its local environment, Docker image, and CodeBuild runtime use the same Python minor version.
+
+Check the selected interpreter:
+
+```bash
+uv run --locked python --version
+```
+
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/) 0.13.7 or newer if needed. It can install Python for you; [python.org](https://www.python.org/downloads/) is also available for manual downloads. From the project submodule, prepare the environment with:
+
+```bash
+uv python install 3.13
+uv sync --locked
+```
+
+Dependencies are declared in `pyproject.toml` and fixed in `uv.lock`; the old `requirements.txt` and pip setup have been replaced. The local-running section below provides the full workflow.
+
+##### Terminal and AWS tools
+
+Use the default terminal on macOS/Linux. On Windows, use Git Bash or Windows Subsystem for Linux (WSL); Gunicorn requires WSL or a Linux container on Windows.
+
+Install these command-line tools:
+
+- [AWS Command Line Interface (CLI) v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html): manages AWS resources and credentials.
+- [`eksctl`](https://docs.aws.amazon.com/eks/latest/eksctl/installation.html): creates and manages Amazon Elastic Kubernetes Service (EKS) clusters.
+- [`kubectl`](https://kubernetes.io/docs/tasks/tools/): interacts with the Kubernetes cluster.
+
+For the AWS IAM Identity Center single sign-on (SSO) profile used in this guide:
+
+```bash
+aws --version  # Confirm that the output starts with aws-cli/2.
+# Run the configuration wizard only if the profile is not already configured.
+aws configure sso --profile deployment-course
+aws configure set region eu-central-1 --profile deployment-course
+aws sso login --profile deployment-course
+aws sts get-caller-identity --profile deployment-course
+```
+
+For an IAM access-key profile, use `aws configure --profile PROFILE_NAME` instead of the SSO wizard. Keep all exercise resources in the same region: this guide uses `eu-central-1`, while the original course examples use `us-east-2`. The identity check above confirms which account and identity you are using without requiring permission to list IAM users. Kubernetes access is configured separately in the deployment steps.
+
+#### Initial setup
+
+Fork the [Server Deployment and Containerization repository](https://github.com/udacity/cd0157-Server-Deployment-and-Containerization) into your GitHub account. For a standalone checkout outside this guide, clone your fork:
+
+```bash
+git clone https://github.com/YOUR_GITHUB_USERNAME/cd0157-Server-Deployment-and-Containerization.git
+cd cd0157-Server-Deployment-and-Containerization
+```
+
+For this guide, the existing fork is [mxagar/udacity_server_deployment_exercises_cd0157](https://github.com/mxagar/udacity_server_deployment_exercises_cd0157). It is registered as a submodule at [project/udacity_server_deployment_exercises_cd0157/](./project/udacity_server_deployment_exercises_cd0157/), tracking `master`. It is a separate working copy from the earlier lab submodule, pointing to the same remote repository.
+
+The one-time registration command, run from the guide repository root, is:
+
+```bash
+git submodule add -b master \
+  https://github.com/mxagar/udacity_server_deployment_exercises_cd0157.git \
+  01_ServerDeployment/project/udacity_server_deployment_exercises_cd0157
+```
+
+Since it is already registered, existing clones should initialize it instead. From `01_ServerDeployment`:
+
+```bash
+git submodule update --init --recursive -- project/udacity_server_deployment_exercises_cd0157
+cd project/udacity_server_deployment_exercises_cd0157
+```
+
+##### Project files
+
+The relevant files are in the submodule's root:
+
+```text
+.
+├── Dockerfile
+├── aws-auth-patch.yml          # Sample Kubernetes access mapping to adapt
+├── ci-cd-codepipeline.cfn.yml  # Pipeline infrastructure; fill in your parameters
+├── buildspec.yml              # CodeBuild commands
+├── simple_jwt_api.yml         # Kubernetes application manifest
+├── trust.json                 # IAM role trust policy to adapt
+├── iam-role-policy.json       # IAM role permissions
+├── main.py                    # Flask application
+├── pyproject.toml             # Python version and dependency declarations
+├── uv.lock                    # Exact dependency versions
+└── test_main.py               # Unit tests to complete
+```
+
+Most starter files are provided. The main changes described in the project instructions are:
+
+| File | Work to complete |
+| --- | --- |
+| `trust.json` and `iam-role-policy.json` | Configure the IAM role that CodeBuild assumes during deployment, including its trust relationship and AWS permissions. |
+| `aws-auth-patch.yml` | After creating the cluster, prepare its role mapping using the sample's indentation as a guide. Preserve existing mappings when applying it. |
+| `ci-cd-codepipeline.cfn.yml` | Fill in your parameter values. The CloudFormation template provisions CodeBuild, CodePipeline, their IAM roles, and an Amazon Simple Storage Service (S3) artifact bucket. CodeBuild executes `buildspec.yml`. |
+| `test_main.py` | Write and complete the application's unit tests. |
+
+#### Flask application overview
+
+The application in `main.py` exposes three application programming interface (API) endpoints:
+
+| Method and path | Input | Response |
+| --- | --- | --- |
+| `GET /` | None | The JSON string `"Healthy"`. The starter also accepts `POST /`. |
+| `POST /auth` | A JavaScript Object Notation (JSON) body with nonempty `email` and `password` fields | A JSON object containing a JSON Web Token (JWT). |
+| `GET /contents` | A valid JWT in the `Authorization: Bearer <token>` header | The verified token's `email`, expiration time (`exp`), and not-before time (`nbf`). Missing or invalid tokens produce status 401. |
+
+A JWT carries claims, such as an email address and validity timestamps, between systems. This app reads `JWT_SECRET` from the environment and uses it to **sign and verify** tokens with `HS256`. The contents are encoded, not encrypted: verification checks their integrity rather than decrypting them. The starter checks that the login fields are present; it does not validate them against a user database or include the password in the token.
+
+Use Flask's built-in development server for local exploration. For deployment, the Docker image's entry point runs [Gunicorn](https://gunicorn.org/), a production Web Server Gateway Interface (WSGI) server that loads `main:APP` and listens on port `8080`. The following local-running and containerization sections cover starting the app, building the image, and testing the container.
+
 ### Part 1 A: Run the application locally
+
+Run the Flask application in `main.py` directly before containerizing it. Use the endpoint contract from the preceding overview to check the health endpoint, issue a JSON Web Token (JWT), and retrieve its verified claims.
+
+#### 1. Install the dependencies with uv
+
+From `01_ServerDeployment`, enter the project submodule and prepare its separate environment:
+
+```bash
+cd project/udacity_server_deployment_exercises_cd0157
+uv python install 3.13
+uv sync --locked
+uv run --locked python --version
+```
+
+Use [uv](https://docs.astral.sh/uv/getting-started/installation/) 0.13.7 or newer. The project targets Python 3.13; its `pyproject.toml` declares Flask 3.1.3, PyJWT 2.15.1, Gunicorn 26.2.0, and pytest 9.2.0 as minimum versions within their supported major versions. The committed `uv.lock` fixes the exact dependency versions.
+
+`uv sync --locked` creates the submodule's `.venv` and installs its runtime and development dependencies. Run the remaining `uv` commands from this directory; no manual environment activation is needed. After an intentional dependency change, regenerate the lockfile with `uv lock` and commit it together with `pyproject.toml`.
+
+#### 2. Configure the application's environment
+
+The app reads these settings when `main.py` is imported:
+
+- **`JWT_SECRET`:** The shared secret used to sign and verify tokens. Generate a random value for this local session.
+- **`LOG_LEVEL`:** The application's logging threshold. It defaults to `INFO`; use `DEBUG` while developing to include the startup debug message and other debug-level events.
+
+In the terminal where you will start the server:
+
+```bash
+export JWT_SECRET="$(uv run --locked python -c 'import secrets; print(secrets.token_hex(32))')"
+export LOG_LEVEL=DEBUG
+
+# Verify the settings without displaying the secret.
+test -n "$JWT_SECRET" && printf 'JWT_SECRET is set\n'
+printf 'LOG_LEVEL=%s\n' "$LOG_LEVEL"
+```
+
+Keep the same secret while issuing and checking a token. Changing it and restarting the server invalidates tokens signed with the previous value.
+
+#### 3. Start the development server and check its health
+
+```bash
+uv run --locked python main.py
+```
+
+Leave this terminal running. In a browser, open [http://127.0.0.1:8080/](http://127.0.0.1:8080/), or use a **second terminal**:
+
+```bash
+curl --fail-with-body --silent --show-error http://127.0.0.1:8080/
+```
+
+The response is:
+
+```json
+"Healthy"
+```
+
+To compare logging levels, stop the server with `Ctrl+C` in its terminal and restart it with:
+
+```bash
+LOG_LEVEL=INFO uv run --locked python main.py
+```
+
+The startup debug message now disappears because `INFO` filters out `DEBUG` events. Environment changes affect the app after a restart. This setting controls application logging; the Flask development server still runs in development mode. The Docker deployment uses Gunicorn as described in the app overview.
+
+#### 4. Install jq for the endpoint examples
+
+`jq` parses, filters, modifies, and pretty-prints JavaScript Object Notation (JSON). Install it in the second terminal using the command for your system:
+
+```bash
+# macOS
+brew install jq
+
+# Debian/Ubuntu Linux
+sudo apt-get install jq
+
+# Windows with Chocolatey
+choco install jq
+```
+
+The optional [jq tutorial](https://jqlang.org/tutorial/) explains its filters; completing it is not required for submission.
+
+#### 5. Call /auth and save the token
+
+In the second terminal, submit an email and password, replacing the sample values as needed:
+
+```bash
+TOKEN=$(curl --fail-with-body --silent --show-error \
+  --request POST http://127.0.0.1:8080/auth \
+  --header 'Content-Type: application/json' \
+  --data '{"email":"abc@xyz.com","password":"mypwd"}' \
+  | jq -er '.token')
+export TOKEN
+printf '%s\n' "$TOKEN"
+```
+
+The response contains a `token` field. `jq -er '.token'` extracts its string value and reports an error if it is missing or null. `TOKEN` stores the issued token, not the signing secret. This starter demonstrates token issuance; it does not check the supplied credentials against a user database.
+
+#### 6. Troubleshoot dependency or response errors
+
+- **`jq: parse error: Invalid numeric literal …`:** The response may be an HTML error page rather than JSON. Inspect it with `curl -i` and check the server terminal for the underlying exception before blaming the JSON parser.
+- **`AttributeError: 'str' object has no attribute 'decode'`:** PyJWT 2 returns a string from `jwt.encode()`. The updated `/auth` handler returns it directly:
+
+```python
+return jsonify(token=_get_jwt(user_data))
+```
+
+The obsolete byte-to-text `.decode('utf-8')` call caused the error. **`jwt.decode()` still exists** and verifies tokens; it is a different operation. Use the current code and locked dependencies instead of downgrading to PyJWT 1.7.1.
+
+To check the PyJWT version or run the local regression tests, use the project directory:
+
+```bash
+uv run --locked python -c 'import jwt; print(jwt.__version__)'
+uv run --locked pytest
+```
+
+If your environment is out of sync, repeat step 1.
+
+#### 7. Call /contents with the token
+
+In the same second terminal where `TOKEN` is set:
+
+```bash
+curl --fail-with-body --silent --show-error \
+  http://127.0.0.1:8080/contents \
+  --header "Authorization: Bearer ${TOKEN}" \
+  | jq .
+```
+
+The response includes the email submitted above and the token's `exp` and `nbf` timestamps. The client supplies the token; the server verifies its signature and validity using `JWT_SECRET`. The payload is not encrypted. Missing, expired, malformed, or incorrectly signed tokens produce status `401`.
+
+![Accessing the app running locally](./project/assets/access_app_locally.jpeg)
+
+Stop the development server with `Ctrl+C` when you finish.
 
 ### Part 1 B: Containerizing and Running Locally
 
+Package the application tested in Part 1 A as a Docker image, run it with Gunicorn, and verify its endpoints through a published host port. Work from the project submodule, `01_ServerDeployment/project/udacity_server_deployment_exercises_cd0157/`.
+
+#### 1. Verify the Dockerfile
+
+The [project Dockerfile](./project/udacity_server_deployment_exercises_cd0157/Dockerfile) uses the same Python 3.13 and uv dependency setup as the local environment:
+
+```dockerfile
+# Use the same Python 3.13 runtime as the local environment and CodeBuild.
+FROM python:3.13-slim
+
+# Copy the pinned uv executable into the image.
+COPY --from=ghcr.io/astral-sh/uv:0.13.7 /uv /usr/local/bin/uv
+# Disable bytecode files, stream logs immediately, and use the image's Python and project environment.
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_PYTHON_DOWNLOADS=never \
+    PATH="/app/.venv/bin:$PATH"
+
+# Set up an app directory for the code and install locked runtime dependencies.
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+RUN uv sync --locked --no-dev --no-cache
+# Copy the application after dependencies so code changes can reuse their cached layer.
+COPY main.py .
+
+# Run the Flask application with the Gunicorn WSGI server on container port 8080.
+ENTRYPOINT ["gunicorn", "-b", ":8080", "main:APP"]
+```
+
+- `uv sync --locked --no-dev --no-cache` installs the exact runtime dependencies from `uv.lock`, excluding development tools such as pytest.
+- The project environment's `bin` directory is added to `PATH`, so the entry point finds its installed Gunicorn executable.
+- `main:APP` loads `APP` from `main.py`; `-b :8080` makes the Web Server Gateway Interface (WSGI) server listen on container port `8080`.
+- The existing `.dockerignore` excludes the host's `.venv`, Git metadata, caches, and `.env*` files from the build context.
+
+The original course used an Amazon Elastic Container Registry (ECR) Public build image to work around Docker Hub pull limits. This version uses the Python runtime image above. If a pull is rate-limited, authenticate through Docker Desktop or `docker login` and follow the [Docker Hub pull-limit guidance](https://docs.docker.com/docker-hub/usage/pulls/).
+
+#### 2. Store the container's environment settings
+
+Containers do not automatically inherit your terminal's environment variables. Create `.env_file` in the project directory so Docker can pass `JWT_SECRET` and `LOG_LEVEL` to the application at startup.
+
+Generate the secret and write the file:
+
+```bash
+JWT_SECRET=$(uv run --locked python -c 'import secrets; print(secrets.token_hex(32))')
+printf 'JWT_SECRET=%s\nLOG_LEVEL=DEBUG\n' "$JWT_SECRET" > .env_file
+```
+
+Its format is plain `KEY=value`, without `export` or surrounding quotes:
+
+```dotenv
+JWT_SECRET=your-generated-secret
+LOG_LEVEL=DEBUG
+```
+
+The existing `.gitignore` keeps this local file out of Git, and `.dockerignore` keeps it out of the image. You can confirm the Git rule with:
+
+```bash
+git check-ignore .env_file
+```
+
+For the later cloud deployment, use a secret-management service such as AWS Systems Manager Parameter Store. Changing `.env_file` requires recreating the container to load the new values; rebuilding the image is unnecessary.
+
+#### 3. Start Docker Desktop
+
+Open Docker Desktop and wait for its engine to be ready. Confirm the terminal can reach it:
+
+```bash
+docker info
+```
+
+#### 4. Build the image
+
+From the directory containing the Dockerfile:
+
+```bash
+docker build -t myimage .
+
+# List available images.
+docker image ls
+# Optional cleanup after the exercise: replace IMAGE_ID with the unused image's ID.
+# docker image rm IMAGE_ID
+```
+
+The final `.` supplies the current directory as the build context. Docker reads the Dockerfile, installs dependencies in the image, and tags the result `myimage`. After removing any containers that reference it, you can remove an unused image with the cleanup command above.
+
+#### 5. Create and run the container
+
+Pass the settings file with `--env-file` and publish **host port 80 -> container port 8080**:
+
+```bash
+docker run --name myContainer \
+  --env-file=.env_file \
+  -p 127.0.0.1:80:8080 \
+  myimage
+```
+
+The `127.0.0.1` binding makes the published port available on your own computer. Leave this terminal open to view Gunicorn and application logs; use a second terminal for the requests below. If port `80` is unavailable, use `-p 127.0.0.1:8081:8080` and substitute host port `8081` in those requests.
+
+Useful container commands, run from the second terminal:
+
+```bash
+# List running containers; these two commands are equivalent.
+docker container ls
+docker ps
+
+# Run these when finished, before reusing the name myContainer.
+# docker container stop myContainer
+# docker container rm myContainer
+```
+
+You can also substitute a container ID from `docker ps` for its name. Stopping a container ends its process; removing it frees the name. Keep it running while completing step 6.
+
+#### 6. Check the endpoints
+
+Use the same endpoint workflow as Part 1 A, targeting the published host port:
+
+```bash
+# Gunicorn serving Flask inside the container, reached through host port 80.
+curl --fail-with-body --silent --show-error http://localhost:80/
+
+# Comparison only: the separate Flask development server from Part 1 A uses port 8080.
+# Run this only if that server is also running.
+# curl --request GET http://localhost:8080/
+```
+
+The health check returns `"Healthy"`. You can also open [http://localhost:80/](http://localhost:80/) in a browser.
+
+Issue a token, then pass it to the contents endpoint:
+
+```bash
+# Send the email and password as JSON and extract the returned token.
+TOKEN=$(curl --fail-with-body --silent --show-error \
+  --request POST http://localhost:80/auth \
+  --header 'Content-Type: application/json' \
+  --data '{"email":"abc@xyz.com","password":"WindowsPwd"}' \
+  | jq -er '.token')
+export TOKEN
+printf '%s\n' "$TOKEN"
+
+# Verify the token and return its claims.
+curl --fail-with-body --silent --show-error \
+  http://localhost:80/contents \
+  --header "Authorization: Bearer ${TOKEN}" \
+  | jq .
+```
+
+The response includes the submitted email and its `exp` and `nbf` timestamps. This verifies the complete container workflow, including its runtime secret configuration. Stop and remove `myContainer` using the commands in step 5 when you finish.
+
 ### Part 2 A: Overview of the CD Pipeline
 
+Extend the locally tested container into a **continuous integration (CI)** and **continuous delivery (CD)** pipeline on Amazon Web Services (AWS). Reuse the Python 3.13, uv, and locked-dependency setup from Part 1 while completing the following stages in order.
+
+#### 1. Prepare the cluster and CodeBuild access
+
+- **Create the cluster:** Use `eksctl` to create an Amazon Elastic Kubernetes Service (EKS) cluster in your preferred region. Keep it in the same region as the pipeline; this guide uses `eu-central-1`.
+- **Create the deployment role manually:** Define the AWS Identity and Access Management (IAM) role that CodeBuild will assume. Use the provided `trust.json` and `iam-role-policy.json` policy files to configure its trust relationship and required AWS permissions.
+- **Authorize Kubernetes operations:** Map that role to the appropriate Kubernetes identity and groups through the cluster's `aws-auth` ConfigMap, following the exercise's role-based access control (RBAC) pattern.
+
+#### 2. Configure and deploy the pipeline
+
+- **GitHub access:** Generate a GitHub access token and supply it through the template's parameters. It authorizes CodePipeline's source action to retrieve the monitored repository.
+- **Infrastructure:** Deploy [`ci-cd-codepipeline.cfn.yml`](./project/udacity_server_deployment_exercises_cd0157/ci-cd-codepipeline.cfn.yml) with AWS CloudFormation to create CodePipeline, CodeBuild, and their supporting resources. CodeBuild executes the commands in [`buildspec.yml`](./project/udacity_server_deployment_exercises_cd0157/buildspec.yml).
+- **Runtime secret:** Store the application's `JWT_SECRET` signing secret as a `SecureString` in AWS Systems Manager Parameter Store. The buildspec's `parameter-store` mapping retrieves it into CodeBuild's environment; configure its delivery to the application containers as part of the Kubernetes deployment.
+- **Build and deploy:** Push a commit to the monitored branch. CodePipeline starts CodeBuild, which builds the image, pushes it to Amazon Elastic Container Registry (ECR), and applies the Kubernetes application manifest. The cluster then serves the Flask application through Gunicorn and its Kubernetes Service.
+
+#### 3. Add automated tests
+
+After the first working deployment, integrate the project's pytest tests into the build using uv. Make passing tests a requirement for publishing the image and deploying it, so a failing commit cannot update the running application.
+
+The following sections cover cluster access, pipeline deployment, and then the automated test gate in detail.
+
+
 ### Part 2 B: Create EKS Cluster and IAM Role
+
+#### Prerequisites and working context
+
+Use AWS Command Line Interface (CLI) v2, `eksctl`, and `kubectl`. The commands below use Bash on macOS/Linux or Git Bash/Windows Subsystem for Linux (WSL) on Windows. Run them from the project submodule, `01_ServerDeployment/project/udacity_server_deployment_exercises_cd0157/`, where the policy files are located.
+
+Keep these settings in the same terminal session:
+
+```bash
+export AWS_PROFILE="deployment-course"
+export AWS_DEFAULT_REGION="eu-central-1"
+CLUSTER_NAME="simple-jwt-api"
+KUBERNETES_VERSION="1.37"
+
+aws sso login --profile "$AWS_PROFILE"
+aws sts get-caller-identity
+aws --version
+eksctl version
+kubectl version --client
+```
+
+This uses the AWS IAM Identity Center single sign-on (SSO) profile configured earlier. For a different authentication method, sign in through that profile's normal workflow. Creating and administering the cluster must use an identity with the required access; an SSO login alone does not grant Kubernetes permissions on an existing cluster.
+
+The project now targets **Kubernetes 1.37** and **kubectl 1.37.2**, which is also pinned in the project's `buildspec.yml`. A kubectl client must be within one minor version of the control plane; for example, a 1.37 client supports 1.36–1.38 control planes. Check this relationship locally and in CodeBuild whenever you change the cluster version.
+
+#### 1. Create and verify the EKS cluster
+
+Create an Amazon Elastic Kubernetes Service (EKS) cluster named `simple-jwt-api` with two `t3.medium` worker nodes:
+
+```bash
+eksctl create cluster \
+  --name "$CLUSTER_NAME" \
+  --nodes 2 \
+  --version "$KUBERNETES_VERSION" \
+  --instance-types t3.medium \
+  --region "$AWS_DEFAULT_REGION" \
+  --profile "$AWS_PROFILE"
+```
+
+This replaces the course's obsolete Kubernetes 1.22 example. Version 1.37 is currently supported in `eu-central-1`; if you choose another region, verify version and instance availability there. Cluster creation takes several minutes and provisions the control plane and a managed node group containing two nodes.
+
+Monitor the **EKS dashboard** in the selected region and the **CloudFormation console** for the cluster and node-group stacks. Refresh kubeconfig with the same profile, then verify that both nodes are `Ready`:
+
+```bash
+aws eks update-kubeconfig \
+  --name "$CLUSTER_NAME" \
+  --region "$AWS_DEFAULT_REGION" \
+  --profile "$AWS_PROFILE"
+kubectl config current-context
+kubectl get nodes
+```
+
+If Kubernetes reports `Unauthorized`, confirm the profile saved in kubeconfig and use the cluster creator's identity or another identity already authorized as an administrator. This avoids the profile mismatch encountered in the earlier exercise.
+
+The manual `aws-auth` mapping used below requires authentication mode `CONFIG_MAP` or `API_AND_CONFIG_MAP`. Current `eksctl` defaults to the latter; verify it after creation:
+
+```bash
+aws eks describe-cluster --name "$CLUSTER_NAME" \
+  --query 'cluster.{version:version,authenticationMode:accessConfig.authenticationMode}' \
+  --output table
+```
+
+An `API`-only cluster does not use `aws-auth`. For this exercise, create or reuse a cluster that supports the ConfigMap method rather than applying an ineffective mapping.
+
+##### Cleanup reminder for after project feedback
+
+The cluster, worker nodes, and supporting networking incur charges while retained. Keep them for the project and review, then remove any exercise LoadBalancer Services or Ingresses before deleting the cluster:
+
+```bash
+# Run after receiving feedback and removing the exercise load balancers.
+eksctl delete cluster \
+  --name "$CLUSTER_NAME" \
+  --region "$AWS_DEFAULT_REGION" \
+  --profile "$AWS_PROFILE" \
+  --wait
+```
+
+The [earlier cleanup procedure](#final-pipeline-clean-up) explains the deletion order. The remaining steps below prepare access while the cluster is running.
+
+#### 2. Create or reuse the IAM role for CodeBuild
+
+CodeBuild will assume `UdacityFlaskDeployCBKubectlRole` to access EKS. The **trust policy** determines who can assume it; the **permissions policy** determines its allowed AWS actions. If you retained this exercise role from the previous lesson, verify its policies and reuse it instead of creating a duplicate.
+
+##### Get the account ID and prepare the trust policy
+
+```bash
+aws sts get-caller-identity --query Account --output text
+```
+
+Replace `<ACCOUNT_ID>` in [`trust.json`](./project/udacity_server_deployment_exercises_cd0157/trust.json) with that 12-digit account ID:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::<ACCOUNT_ID>:root"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+```
+
+The account principal identifies the AWS account; it does not require signing in as the root user. The pipeline template later adds its CodeBuild service role to this trust relationship.
+
+##### Create the role and attach its permissions
+
+If the role is absent, create it from the project directory:
+
+```bash
+aws iam create-role \
+  --role-name UdacityFlaskDeployCBKubectlRole \
+  --assume-role-policy-document file://trust.json \
+  --output text --query 'Role.Arn'
+```
+
+Save the returned Amazon Resource Name (ARN), which has this form:
+
+```text
+arn:aws:iam::<ACCOUNT_ID>:role/UdacityFlaskDeployCBKubectlRole
+```
+
+The provided [`iam-role-policy.json`](./project/udacity_server_deployment_exercises_cd0157/iam-role-policy.json) grants `eks:Describe*` and `ssm:GetParameters`:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "eks:Describe*",
+        "ssm:GetParameters"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+Attach it as the inline policy `eks-describe`:
+
+```bash
+aws iam put-role-policy \
+  --role-name UdacityFlaskDeployCBKubectlRole \
+  --policy-name eks-describe \
+  --policy-document file://iam-role-policy.json
+```
+
+In **IAM -> Roles -> UdacityFlaskDeployCBKubectlRole**, verify its trust relationship and permissions. If `create-role` returns `EntityAlreadyExists`, inspect and reuse the existing exercise role; do not delete it just to rerun the command.
+
+#### 3. Authorize the role through Kubernetes RBAC
+
+Repeat this mapping for **each newly created cluster**, even when reusing the IAM role. Follow the exercise's [`aws-auth` ConfigMap](https://docs.aws.amazon.com/eks/latest/userguide/auth-configmap.html) method to associate the AWS role with Kubernetes groups and their role-based access control (RBAC) permissions.
+
+##### Fetch the live ConfigMap
+
+Use a temporary file so you edit the current cluster configuration rather than the repository's illustrative sample:
+
+```bash
+AUTH_PATCH=/tmp/aws-auth-patch.yml
+kubectl get configmap/aws-auth --namespace kube-system -o yaml > "$AUTH_PATCH"
+```
+
+If this returns `NotFound` on a new `API_AND_CONFIG_MAP` cluster whose managed nodes are already `Ready`, its node access may be supplied by EKS access entries. Create the missing ConfigMap, then repeat the fetch:
+
+```bash
+# Only if aws-auth is absent; never replace an existing ConfigMap with an empty one.
+kubectl create configmap aws-auth --namespace kube-system --from-literal=mapRoles='[]'
+kubectl get configmap/aws-auth --namespace kube-system -o yaml > "$AUTH_PATCH"
+```
+
+##### Edit the role mapping
+
+Open the fetched file in an editor; with the Visual Studio Code command available:
+
+```bash
+code "$AUTH_PATCH"
+```
+
+Append the following entry **inside the existing `data.mapRoles` block**. Replace `<ACCOUNT_ID>`, preserve existing entries such as node-role mappings, and avoid adding a duplicate if this role is already present:
+
+```yaml
+data:
+  mapRoles: |
+    - groups:
+        - system:masters
+      rolearn: arn:aws:iam::<ACCOUNT_ID>:role/UdacityFlaskDeployCBKubectlRole
+      username: build
+```
+
+This fragment shows only the new entry. If the existing value is `mapRoles: '[]'`, replace that empty value with the block above. Otherwise, keep all current entries and append the new one at the same indentation. The `system:masters` group grants administrative access for this exercise.
+
+Use the corrected [sample `aws-auth-patch.yml`](./project/udacity_server_deployment_exercises_cd0157/aws-auth-patch.yml) to compare indentation. Its placeholders are illustrative: use the actual node-role entries and metadata from the fetched ConfigMap.
+
+##### Patch the ConfigMap and verify
+
+```bash
+kubectl patch configmap/aws-auth --namespace kube-system \
+  --type merge --patch-file "$AUTH_PATCH"
+```
+
+The expected response is:
+
+```text
+configmap/aws-auth patched
+```
+
+If Kubernetes returns:
+
+```text
+Error from server (Conflict): Operation cannot be fulfilled on configmaps "aws-auth": the object has been modified; please apply your changes to the latest version and try again
+```
+
+Repeat **fetch -> edit -> patch** using the latest ConfigMap. Keep its fresh metadata and re-add the intended role entry rather than retrying the stale file.
+
+Finally, confirm that the nodes remain healthy:
+
+```bash
+kubectl get nodes
+```
 
 ### Part 2 C: Deployment to Kubernetes Using CodePipeline and CodeBuild
 
