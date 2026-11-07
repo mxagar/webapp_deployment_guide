@@ -160,7 +160,24 @@ Table of Contents:
       - [4. Troubleshoot failed builds](#4-troubleshoot-failed-builds)
       - [5. Trigger and verify the build](#5-trigger-and-verify-the-build)
     - [Final Pipeline: Clean up](#final-pipeline-clean-up)
+      - [Required: stop the pipeline](#required-stop-the-pipeline)
+      - [Required: delete the load balancer and cluster](#required-delete-the-load-balancer-and-cluster)
+      - [Required for no remaining storage costs: remove retained data](#required-for-no-remaining-storage-costs-remove-retained-data)
+      - [Optional: remove unused access and credentials](#optional-remove-unused-access-and-credentials)
   - [Project: Deploy Your Flask App to Kubernetes Using EKS](#project-deploy-your-flask-app-to-kubernetes-using-eks)
+    - [Project Overview](#project-overview)
+      - [How the pipeline works](#how-the-pipeline-works)
+      - [Part 1: Run the application locally](#part-1-run-the-application-locally)
+      - [Part 2: Deploy on AWS](#part-2-deploy-on-aws)
+    - [Prerequisites and App Overview](#prerequisites-and-app-overview)
+    - [Part 1 A: Run the application locally](#part-1-a-run-the-application-locally)
+    - [Part 1 B: Containerizing and Running Locally](#part-1-b-containerizing-and-running-locally)
+    - [Part 2 A: Overview of the CD Pipeline](#part-2-a-overview-of-the-cd-pipeline)
+    - [Part 2 B: Create EKS Cluster and IAM Role](#part-2-b-create-eks-cluster-and-iam-role)
+    - [Part 2 C: Deployment to Kubernetes Using CodePipeline and CodeBuild](#part-2-c-deployment-to-kubernetes-using-codepipeline-and-codebuild)
+    - [Part 2 D: Adding Tests to the Build](#part-2-d-adding-tests-to-the-build)
+    - [Cleaning Up](#cleaning-up)
+    - [Project Rubric](#project-rubric)
 
 ## Introduction
 
@@ -4199,4 +4216,58 @@ Finally, revoke the GitHub token and remove it from your local `.env` if you cre
 
 ## Project: Deploy Your Flask App to Kubernetes Using EKS
 
-:construction:
+This section explains the project to be submitted. It is implemented in the folder [`./project`](./project/).
+
+### Project Overview
+
+Combine containerization, container orchestration, **continuous integration (CI)**, and **continuous delivery (CD)** into a pipeline for a Flask application. The project has two parts:
+
+- containerizing and testing locally,
+- then deploying at scale on Amazon Web Services (AWS).
+
+Each part begins with an introductory video.
+
+The CI/CD pipeline connects your GitHub repository to an **Amazon Elastic Kubernetes Service (EKS)** cluster. A provided **AWS CloudFormation** template (`.yaml`) creates the pipeline resources programmatically, including AWS CodeBuild and AWS CodePipeline. These related AWS resources form a **stack**.
+
+#### How the pipeline works
+
+![Overarching diagram of the final deployed application showing continuous integration and continuous delivery pipeline as described below](./project/assets/project_overciew.png)
+
+The diagram's numbered actions represent this flow:
+
+1. **Code check-in:** Contributors collaborate on the Flask application in GitHub and push changes to the monitored branch.
+2. **Trigger a build:** The source change starts CodePipeline, which invokes CodeBuild to build and test the code, create a container image, and push it to a container registry. This exercise uses a GitHub access token to authenticate the pipeline's source connection.
+3. **Automatic deployment:** CodePipeline coordinates the workflow, and the build's deployment commands update the application image running in the EKS cluster.
+4. **Serve the application:** A Kubernetes Service exposes the Flask application's application programming interface (API) endpoints. The result is a working application that updates automatically after subsequent pushes.
+
+#### Part 1: Run the application locally
+
+1. Run the Flask application to become familiar with its behavior.
+2. Write a `Dockerfile` that defines the application's runtime environment and dependencies.
+3. Build an image and run it as a local container, then test the containerized application.
+
+#### Part 2: Deploy on AWS
+
+1. **Prepare cluster access:** Create the EKS cluster and its worker nodes in your preferred region using a single `eksctl create cluster` command. Create an **AWS Identity and Access Management (IAM)** role that CodeBuild can assume, grant it the required AWS permissions, and map it to a Kubernetes identity through the cluster's `aws-auth` ConfigMap, following the exercise's access pattern. That mapping requires a cluster authentication mode that supports ConfigMaps (`CONFIG_MAP` or `API_AND_CONFIG_MAP`).
+2. **Configure source credentials:** Generate the GitHub token described above and supply it through the template's parameters; do not commit it to the repository.
+3. **Provision the pipeline:** Deploy the supplied CloudFormation template with your repository, branch, cluster, and role settings.
+4. **Run and verify:** For a manual run, open the pipeline in the CodePipeline console and choose [**Release change**](https://docs.aws.amazon.com/codepipeline/latest/userguide/pipelines-rerun-manually.html). Start the complete pipeline rather than an isolated CodeBuild build, so the source artifacts are supplied correctly. Check the build and deployment results and confirm that the application endpoints respond.
+
+### Prerequisites and App Overview
+
+### Part 1 A: Run the application locally
+
+### Part 1 B: Containerizing and Running Locally
+
+### Part 2 A: Overview of the CD Pipeline
+
+### Part 2 B: Create EKS Cluster and IAM Role
+
+### Part 2 C: Deployment to Kubernetes Using CodePipeline and CodeBuild
+
+### Part 2 D: Adding Tests to the Build
+
+### Cleaning Up
+
+### Project Rubric
+
