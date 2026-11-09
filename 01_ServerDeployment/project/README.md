@@ -2,7 +2,7 @@
 
 This README is the project's requirements checklist, execution guide, and activity log. The detailed [course instructions](../README.md#project-deploy-your-flask-app-to-kubernetes-using-eks) remain the source for the assignment and rubric.
 
-I forked the starter/original repo to []().
+I forked the starter/original repo to [https://github.com/mxagar/webapp_deployment_guide](https://github.com/mxagar/webapp_deployment_guide).
 
 ## Documentation rule
 
