@@ -320,6 +320,8 @@ JWT explanation update (2026-11-09, assistant): read the opening section with `G
 
 JWT storage explanation update (2026-11-09, assistant): used `apply_patch` to document client-side token storage, the temporary `TOKEN` shell variable and `unset TOKEN`, browser storage examples, and the distinction between issued JWTs and backend `JWT_SECRET` storage. Documentation only; no application or AWS changes. Verification: `git diff --check`.
 
+Submodule audit (2026-11-09, assistant): ran `git submodule status --recursive`. The sandbox blocked Git's shell helper with Windows error 5; reran the same read-only command with elevated execution successfully. Also inspected `.gitmodules`, `git status --short`, and `git ls-files --stage`, and ran `git -C <path> status --short` for each initialized submodule. The project submodule is uninitialized (`-52ce056932fdb1f899505eee8454216a20f48871`). Both lab submodules and `notes_webapp` match the commits pinned by the parent. No remote fetch was performed, so this does not establish whether newer upstream commits exist. No submodule was updated during this audit.
+
 For future entries, use: date/time (Europe/Budapest), actor, exact sanitized command or console action, result, verification/evidence, and next action. Include unsuccessful attempts and their resolution.
 
 ## Reviewer evidence
