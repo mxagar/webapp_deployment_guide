@@ -4,6 +4,137 @@ This README is the project's requirements checklist, execution guide, and activi
 
 I forked the starter/original repo to [https://github.com/mxagar/webapp_deployment_guide](https://github.com/mxagar/webapp_deployment_guide).
 
+## Implementation update — 2026-11-09
+
+The fork's project submodule is now populated at recorded commit `52ce056932fdb1f899505eee8454216a20f48871`, with local implementation changes in three files. Its origin is `https://github.com/mxagar/udacity_server_deployment_exercises_cd0157.git`. No commits or pushes were made, and no AWS resources were created. The checkout is currently detached at the recorded commit; select `master` before committing as described below. The earlier lab checkout was not changed.
+
+### Changes made in the forked submodule
+
+1. **`buildspec.yml`: run the existing regression suite in `pre_build`**, immediately after dependency synchronization:
+
+   ```yaml
+   - uv sync --locked
+   - uv run --locked python -m pytest test_main.py
+   ```
+
+2. **`buildspec.yml`: guard image publication/deployment and wait for rollout.** The first `post_build` command now rejects a failed earlier phase. The existing push, kubeconfig update, apply, and artifact commands remain in place; rollout verification follows apply:
+
+   ```yaml
+   post_build:
+     commands:
+       - test "$CODEBUILD_BUILD_SUCCEEDING" = "1"
+       - docker push $REPOSITORY_URI:$TAG
+       # Existing diagnostics and kubeconfig update remain here.
+       - kubectl apply -f simple_jwt_api.yml
+       - kubectl rollout status deployment/simple-jwt-api --namespace default --timeout=180s
+       # Existing build.json artifact command remains here.
+   ```
+
+3. **`simple_jwt_api.yml`: supply the signing secret and check readiness.** Under the application container:
+
+   ```yaml
+   env:
+     - name: JWT_SECRET
+       valueFrom:
+         secretKeyRef:
+           name: jwt-secret
+           key: JWT_SECRET
+   readinessProbe:
+     httpGet:
+       path: /
+       port: 8080
+     initialDelaySeconds: 3
+     periodSeconds: 5
+   ```
+
+   Kubernetes must find `jwt-secret` in the application namespace before Pods can start. The readiness probe checks HTTP health before Pods receive Service traffic and allows rollout verification to reflect HTTP readiness.
+
+4. **`ci-cd-codepipeline.cfn.yml`: set the fork defaults.** `GitSourceRepo` now defaults to `udacity_server_deployment_exercises_cd0157`; `GitHubUser` defaults to `mxagar`. Existing defaults already match `simple-jwt-api`, `master`, `UdacityFlaskDeployCBKubectlRole`, and `aws/codebuild/standard:8.0`.
+
+The Flask app, Dockerfile, dependency lockfile, and 11 existing regression cases already supported the required local workflow and did not need changes. Account-specific placeholders in `trust.json` and `aws-auth-patch.yml` remain deliberate: use your verified account and live cluster mappings, never invent or blindly replace them.
+
+### Verification completed locally
+
+| Check | Result |
+| --- | --- |
+| `uv run --locked pytest` before and after configuration edits | 11 passed, Python 3.13.5 |
+| Buildspec YAML parsing and command-type checks | Passed; each command parsed as a string |
+| Kubernetes multi-document YAML parsing | Passed; Service and Deployment |
+| CloudFormation YAML parsing with intrinsic tags supported | Passed; fork defaults verified. This is syntax checking, not AWS service validation. |
+| `docker build -t eks-flask-project:local .` | Passed; image `sha256:88bc6bfb71c872efecf66a36478c5b22cbbb8d0596ff37628ec3d65de54f4506` |
+| Running Gunicorn container over HTTP | Health, auth, contents passed; missing and invalid tokens returned 401 |
+| `git diff --check` inside the submodule | Passed |
+
+The image uses Python 3.13.18 and uv 0.13.7; local Python is the same minor version. Installed local uv is 0.11.16 and completed the checks, but the course recommends upgrading local uv to at least 0.13.7. The current Windows `aws` command resolves to a Python virtual-environment installation; verify/install **AWS CLI v2** before SSO or EKS work.
+
+AWS template validation, IAM authorization, EKS rollout, external load-balancer checks, and the real failing-pipeline gate demonstration remain pending. Local YAML parsing and API tests do not establish those cloud results.
+
+### Your next steps, in order
+
+Use Bash in Git Bash/WSL for the following commands; the detailed numbered execution guide below explains the AWS actions and expected results. After each step, report its result so it can be recorded in the activity log before proceeding.
+
+1. **Review and publish the fork changes.** From the guide root:
+
+   ```bash
+   cd 01_ServerDeployment/project/udacity_server_deployment_exercises_cd0157
+   git status --short
+   git diff
+   git switch master
+   git add buildspec.yml simple_jwt_api.yml ci-cd-codepipeline.cfn.yml
+   git commit -m "Configure tested Flask deployment to EKS"
+   git push origin master
+   ```
+
+   Confirm the push succeeds and record its commit ID. If branch selection or push is rejected, stop and inspect the message rather than force-pushing. A running pipeline on this fork/branch would be triggered by this push; none was created in this session.
+
+2. **Verify tools and sign in** using execution-guide step 2. Ensure `aws --version` begins with `aws-cli/2`; verify `eksctl`, `kubectl`, and `jq`. Confirm `deployment-course`, your account ID, `eu-central-1`, and available EKS versions.
+3. **Create or reuse the EKS cluster** using step 3. Creating the cluster begins AWS charges. Confirm two Ready nodes and a ConfigMap-compatible authentication mode.
+4. **Configure the deployment IAM role** using step 4. Fill in the actual account ID in `trust.json` and create/reuse the named role with its permissions. Record the actual policy edits and commands.
+5. **Authorize the role in the live cluster** using step 5. Preserve all existing `aws-auth` mappings and verify nodes remain Ready.
+6. **Create Parameter Store and Kubernetes secrets** using step 6, before pipeline creation. The manifest reference is already implemented; create the actual `JWT_SECRET` parameter and `default/jwt-secret` privately.
+7. **Publish any account-specific file changes deliberately.** Inspect `git diff`, stage only intended non-secret policy changes, commit, and push to `master`. Do not commit live ConfigMap exports, secret files, or credentials. Record the exact commands and commit ID.
+8. **Validate the template with AWS CLI v2**, from the submodule directory with the profile and region exported:
+
+   ```bash
+   aws cloudformation validate-template --template-body file://ci-cd-codepipeline.cfn.yml
+   ```
+
+   Then create the stack in the console following step 7, entering the GitHub token privately. Verify the stack reaches `CREATE_COMPLETE` and the pipeline succeeds. Capture execution IDs and source commit.
+9. **Verify the live deployment** using step 8. Save the external URL and sanitized endpoint results for the reviewer.
+10. **Demonstrate the test gate** using step 9: push a temporary failing test, verify no image/deployment update, then remove it and push a passing correction. Record both execution IDs and running image evidence.
+11. **Save the final submodule pointer and project documentation.** After the fork's final corrected commit is pushed, return to the guide root, review changes, and commit the README plus updated submodule pointer:
+
+    ```bash
+    cd ../../..
+    git diff --submodule
+    git add 01_ServerDeployment/project/README.md 01_ServerDeployment/project/udacity_server_deployment_exercises_cd0157
+    git commit -m "Document EKS project implementation and deployment evidence"
+    ```
+
+    Push the guide's current branch through your normal workflow. Its recorded pointer must refer to a commit already available in the fork. Keep logging later review and cleanup actions too.
+12. **Keep the URL available for review, then clean up** using step 10. Record and verify deletion of chargeable resources and retained data.
+
+### Local signing secret in `.env`
+
+A fresh 32-byte cryptographically random `JWT_SECRET` is saved in `udacity_server_deployment_exercises_cd0157/.env`. The file is ignored by Git and excluded from Docker's build context through the existing `.env*` patterns. Its value is intentionally absent from this README. This is a newly generated local secret, not recovery of the temporary secret used during the earlier container smoke test.
+
+From the submodule directory, pass it to Docker at runtime:
+
+```bash
+docker run --rm --name flask-project --publish 127.0.0.1:8080:8080 --env-file .env eks-flask-project:local
+```
+
+For direct local Python execution in Bash, export it first; the application does not automatically read `.env`:
+
+```bash
+set -a
+source .env
+set +a
+uv run --locked python main.py
+```
+
+For AWS deployment, step 6 still creates the managed secret separately. To deliberately reuse this local value instead, load `.env` as above and skip step 6's random-generation command before calling `aws ssm put-parameter`. Do not overwrite an existing AWS parameter without first checking that it belongs to this project. Never commit `.env` or print its contents in shared logs.
+
 ## Documentation rule
 
 Every project action performed by the user or assistant must be recorded here: local edits, tests, Git operations, AWS console changes, AWS CLI commands, `eksctl` commands, Kubernetes commands, failures, retries, verification, and cleanup.
@@ -19,9 +150,9 @@ Every project action performed by the user or assistant must be recorded here: l
 | Area | Required result | Status |
 | --- | --- | --- |
 | API | `GET /` returns the JSON string `"Healthy"`. `POST /auth` accepts nonempty email/password and returns a JWT. `GET /contents` returns verified `email`, `exp`, and `nbf`; missing/invalid tokens return 401. | Pending verification |
-| Runtime | Python 3.13 locally, in Docker, and in CodeBuild; dependencies declared in `pyproject.toml`, fixed in `uv.lock`, and installed with uv. | Pending project checkout |
-| Docker | Successful local build using `python:3.13-slim`; locked runtime dependencies; entry point `["gunicorn", "-b", ":8080", "main:APP"]`; all endpoints tested. | Pending |
-| Local secret | Supply `JWT_SECRET` at runtime through an ignored environment file; do not embed it in the image. | Pending |
+| Runtime | Python 3.13 locally, in Docker, and in CodeBuild; dependencies declared in `pyproject.toml`, fixed in `uv.lock`, and installed with uv. | Local and Docker verified; CodeBuild pending |
+| Docker | Successful local build using `python:3.13-slim`; locked runtime dependencies; entry point `["gunicorn", "-b", ":8080", "main:APP"]`; all endpoints tested. | Local build and HTTP checks passed |
+| Local secret | Supply `JWT_SECRET` at runtime through an ignored environment file; do not embed it in the image. | `.env` created and exclusion verified; runtime commands documented |
 | Cluster | EKS `simple-jwt-api` in `eu-central-1`, two `t3.medium` worker nodes; both Ready. Guide target: Kubernetes 1.37, kubectl 1.37.2. | Pending |
 | Access | Deployment IAM role, trust relationship, AWS permissions, and Kubernetes authorization configured. Preserve existing node mappings. | Pending |
 | Infrastructure | Supplied CloudFormation template provisions CodePipeline, CodeBuild, ECR, S3 artifacts, service roles, and trust-policy helper Lambda. | Pending |
@@ -81,7 +212,7 @@ The implementation belongs in the separate Git submodule:
 01_ServerDeployment/project/udacity_server_deployment_exercises_cd0157/
 ```
 
-Initial inspection found its directory unpopulated. The parent records commit `52ce056932fdb1f899505eee8454216a20f48871`. The earlier lab checkout contains a modernized app and regression tests, but does not prove the project checkout's contents. Its reference buildspec lacks pytest execution and a publication guard, and its manifest lacks the Kubernetes Secret reference.
+Initial inspection found its directory unpopulated. It has now been initialized at the parent's recorded commit `52ce056932fdb1f899505eee8454216a20f48871`. The implementation update above describes the local changes applied to this project checkout; the earlier lab checkout remains untouched.
 
 | Setting | Planned value; verify before use |
 | --- | --- |
@@ -117,7 +248,7 @@ git rev-parse HEAD
 
 Inspect `main.py`, `test_main.py`, `Dockerfile`, `pyproject.toml`, `uv.lock`, `buildspec.yml`, `simple_jwt_api.yml`, `ci-cd-codepipeline.cfn.yml`, `trust.json`, `iam-role-policy.json`, and `aws-auth-patch.yml`. Record actual gaps before editing. Submodule initialization may leave a detached HEAD: select a working branch deliberately before committing. Changes inside this submodule must be committed/pushed to its own repository; the parent repository separately records its updated commit pointer.
 
-Complete local API tests and Docker endpoint checks using the course's Part 1 instructions before provisioning AWS. Record every command and result here. Required buildspec changes include pytest after `uv sync --locked` and `test "$CODEBUILD_BUILD_SUCCEEDING" = "1"` as the first `post_build` command before push/deployment. Add the Pod secret reference described in step 6.
+Local API tests and Docker endpoint checks have passed, and the required buildspec gate and Pod secret reference are implemented locally. See the implementation update and activity log above/below. Publish these changes before pipeline creation; do not repeat the edits blindly.
 
 ### 2. Verify tools and AWS identity
 
@@ -324,13 +455,88 @@ JWT storage explanation update (2026-11-09, assistant): used `apply_patch` to do
 
 Submodule audit (2026-11-09, assistant): ran `git submodule status --recursive`. The sandbox blocked Git's shell helper with Windows error 5; reran the same read-only command with elevated execution successfully. Also inspected `.gitmodules`, `git status --short`, and `git ls-files --stage`, and ran `git -C <path> status --short` for each initialized submodule. The project submodule is uninitialized (`-52ce056932fdb1f899505eee8454216a20f48871`). Both lab submodules and `notes_webapp` match the commits pinned by the parent. No remote fetch was performed, so this does not establish whether newer upstream commits exist. No submodule was updated during this audit.
 
+### Implementation session command log — 2026-11-09, assistant
+
+The implementation plan was to retain the existing API/runtime, complete the three deployment configuration files, run local verification, and provide the user's cloud checklist. Changes were applied with `apply_patch` in the fork's checkout and this README. No IAM account ID, secret value, or AWS resource was supplied or changed.
+
+1. Initialized the project checkout successfully (approved execution outside the sandbox):
+
+   ```bash
+   git submodule update --init --recursive -- 01_ServerDeployment/project/udacity_server_deployment_exercises_cd0157
+   ```
+
+2. Inspected the checkout and existing files with PowerShell `Get-ChildItem -Force`, `Get-Content`, and Git. Read `buildspec.yml`, `simple_jwt_api.yml`, `test_main.py`, `pyproject.toml`, `Dockerfile`, `trust.json`, `ci-cd-codepipeline.cfn.yml`, and `.gitignore`. Also read the test-driven-development, verification-before-completion, and writing-plans skill instructions. Commands included:
+
+   ```powershell
+   Get-ChildItem -Force 01_ServerDeployment/project/udacity_server_deployment_exercises_cd0157
+   git -C 01_ServerDeployment/project/udacity_server_deployment_exercises_cd0157 status --short
+   git -C 01_ServerDeployment/project/udacity_server_deployment_exercises_cd0157 remote -v
+   git -C 01_ServerDeployment/project/udacity_server_deployment_exercises_cd0157 branch --show-current
+   Get-Command uv,docker,aws -ErrorAction SilentlyContinue | Select-Object Name,Source
+   uv --version
+   docker version
+   ```
+
+   Result: clean detached checkout of the intended fork; local uv 0.11.16; AWS command from a Python virtual environment. Docker initially failed with sandbox pipe permissions; approved retry returned a running Linux Docker Desktop engine.
+
+3. Ran `uv run --locked pytest` in the submodule. Initial sandbox attempt failed accessing the shared uv cache; approved retry created the project `.venv`, installed locked dependencies, and passed all 11 tests. uv ignored an unrelated inherited `VIRTUAL_ENV` and fell back from hardlinks to copying. After configuration edits, repeated the full command: **11 passed** again.
+4. Applied the three-file configuration changes summarized above. Ran:
+
+   ```bash
+   git -C 01_ServerDeployment/project/udacity_server_deployment_exercises_cd0157 diff --check
+   git -C 01_ServerDeployment/project/udacity_server_deployment_exercises_cd0157 diff --stat
+   ```
+
+   Result: whitespace check passed; three files changed, 18 insertions and two deletions.
+5. A preliminary `python -c "import yaml; print(yaml.__version__)"` failed because the default Python lacked PyYAML. Used an ephemeral dependency through uv instead; project dependency files were not edited:
+
+   ```bash
+   uv run --locked --with pyyaml python -c "from pathlib import Path; import yaml; b=yaml.safe_load(Path('buildspec.yml').read_text()); assert all(isinstance(c,str) for p in b['phases'].values() for c in p['commands']); docs=list(yaml.safe_load_all(Path('simple_jwt_api.yml').read_text())); print('buildspec command types and Kubernetes YAML valid'); print('Kubernetes resources:', [d['kind'] for d in docs])"
+   uv run --locked --with pyyaml python -c "from pathlib import Path; import yaml; L=type('CfnLoader',(yaml.SafeLoader,),{}); L.add_multi_constructor('!',lambda loader,tag,node: loader.construct_scalar(node) if isinstance(node,yaml.ScalarNode) else loader.construct_sequence(node)); t=yaml.load(Path('ci-cd-codepipeline.cfn.yml').read_text(),Loader=L); assert t['Parameters']['GitHubUser']['Default']=='mxagar'; print('CloudFormation YAML parsed; fork defaults verified')"
+   ```
+
+   Both passed. Also consulted AWS CodeBuild documentation through Context7; no AWS account operations were performed.
+6. Built the image from the submodule with approved Docker access:
+
+   ```bash
+   docker build -t eks-flask-project:local .
+   ```
+
+   Result: successful image build and locked runtime installation. Started a temporary container with a random in-memory secret, using PowerShell:
+
+   ```powershell
+   $env:JWT_SECRET = [Convert]::ToHexString([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+   docker run --detach --rm --name eks-flask-project-check --publish 127.0.0.1:18080:8080 --env JWT_SECRET eks-flask-project:local
+   Remove-Item Env:JWT_SECRET
+   ```
+
+7. Exercised the container through HTTP using PowerShell. No tokens or signing secrets were printed:
+
+   ```powershell
+   $baseUrl = 'http://127.0.0.1:18080'
+   $health = Invoke-RestMethod "$baseUrl/"
+   if ($health -ne 'Healthy') { throw 'Health mismatch' }
+   $auth = Invoke-RestMethod "$baseUrl/auth" -Method Post -ContentType 'application/json' -Body '{"email":"test@example.com","password":"exercise-only"}'
+   $claims = Invoke-RestMethod "$baseUrl/contents" -Headers @{ Authorization = "Bearer $($auth.token)" }
+   if ($claims.email -ne 'test@example.com' -or !$claims.exp -or !$claims.nbf) { throw 'Claims mismatch' }
+   foreach ($requestHeaders in @(@{}, @{Authorization='Bearer invalid'})) {
+       $response = Invoke-WebRequest "$baseUrl/contents" -Headers $requestHeaders -SkipHttpErrorCheck
+       if ($response.StatusCode -ne 401) { throw 'Expected 401' }
+   }
+   ```
+
+   Result: all five checks passed. Stopped the temporary container with `docker stop eks-flask-project-check`; `--rm` removed it. The local image remains available for reuse.
+8. Updated this README with the change summary, actual verification evidence, and the ordered user checklist. Final review commands: `git diff --check`, `git -C 01_ServerDeployment/project/udacity_server_deployment_exercises_cd0157 diff --check`, and status/diff inspection. No commits or pushes were performed in either repository.
+
+Local secret persistence (2026-11-09, assistant): checked `.env` absence with `Test-Path`, verified `git -C 01_ServerDeployment/project/udacity_server_deployment_exercises_cd0157 check-ignore .env`, and inspected `.dockerignore`. Created `.env` with PowerShell `[System.Security.Cryptography.RandomNumberGenerator]::GetBytes(32)` encoded with `[Convert]::ToHexString`, using `System.IO.FileMode.CreateNew` to avoid overwriting an existing file. Wrote only `JWT_SECRET=<generated value>` and a newline using ASCII encoding; verified the expected 64-hex-character format without printing the value. Confirmed Git ignores the file and Docker excludes `.env*`. Added the runtime instructions above and ran `git diff --check`. No AWS secret was created or changed.
+
 For future entries, use: date/time (Europe/Budapest), actor, exact sanitized command or console action, result, verification/evidence, and next action. Include unsuccessful attempts and their resolution.
 
 ## Reviewer evidence
 
 - External application URL: pending.
 - Source repository and final commit: pending.
-- Passing local tests and Docker endpoint checks: pending.
+- Passing local tests and Docker endpoint checks: 2026-11-09, 11 pytest cases passed; Docker image built; health/auth/contents and missing/invalid token HTTP checks passed. See implementation session log.
 - Successful pipeline/build execution: pending.
 - Failed-test execution and proof publication/deployment were blocked: pending.
 - Corrected successful execution and live endpoint checks: pending.
