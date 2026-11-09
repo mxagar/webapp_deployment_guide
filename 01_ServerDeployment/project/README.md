@@ -32,6 +32,45 @@ Every project action performed by the user or assistant must be recorded here: l
 
 The original rubric mentions `python:stretch`; this guide explicitly updates it to Python 3.13 slim and uv. Additional endpoints and custom failure alerts are optional. The starter issues tokens from supplied fields; user-database authentication is outside this assignment.
 
+## Understanding JWT: a temporary access pass
+
+**JWT (JSON Web Token)** is a compact, signed token carrying information called **claims** between a client and a server. A useful mental model is a **temporary access pass issued by the backend**: after obtaining it, the client presents it with each request to a protected endpoint. Public endpoints do not need it.
+
+In a complete login system, the backend checks the user's credentials before issuing this pass. This project's starter only checks that email and password are supplied; it does **not** verify them against a user database, so it is not a complete login system.
+
+The project's request flow is:
+
+1. The client sends an email and password to `POST /auth`.
+2. The backend returns a JWT containing the email and validity timestamps.
+3. The client sends the token to the protected `GET /contents` endpoint in the HTTP header:
+
+   ```http
+   Authorization: Bearer <token>
+   ```
+
+4. The backend verifies the signature and timestamps before returning the claims. Missing, expired, or invalid tokens are rejected with status 401.
+
+The claims used here are `email` (the supplied email), `exp` (expiration time), and `nbf` ("not before": when the token becomes valid). The app uses `JWT_SECRET` with HS256 to sign and verify tokens. Modifying a token's contents makes its signature invalid. The signing secret stays on the backend; the client receives only the token.
+
+JWTs commonly support authentication and API authorization. Like a temporary password, a bearer token can be used by whoever holds it until it expires, so keep it private and transmit it over HTTPS. Unlike a password, this token carries signed claims and an expiration time. **Signed does not mean encrypted**: anyone holding this JWT can read its contents, so never include passwords or other secrets in its payload.
+
+### Where the JWT is stored
+
+The **client stores the JWT** after receiving it from `/auth`. In this project's command-line examples, the token is held temporarily in the shell variable `TOKEN`:
+
+```bash
+TOKEN=$(curl ... | jq -er '.token')  # Illustrative: use the full request in the execution guide.
+```
+
+Subsequent protected requests send its value in the `Authorization: Bearer <token>` header. Run `unset TOKEN` when finished to remove the shell variable. In a browser application, storage depends on the application's design, such as application memory or a cookie.
+
+This Flask backend does **not** store each issued JWT. It verifies the token supplied with each request using `JWT_SECRET`. These are different values:
+
+| Value | Stored where in this project | Purpose |
+| --- | --- | --- |
+| JWT access token | Client's temporary `TOKEN` shell variable | Presented by the client to access a protected endpoint |
+| `JWT_SECRET` signing secret | Backend configuration: AWS Parameter Store, then a Kubernetes Secret supplied to the Pods; also retrieved into CodeBuild's environment | Signs and verifies tokens; never sent to the client |
+
 ## Repository and configuration
 
 The implementation belongs in the separate Git submodule:
@@ -276,6 +315,10 @@ When unused, remove the manual IAM role/inline policy, Parameter Store parameter
 | 2026-11-09 | Assistant | Read project README; searched for `AGENTS.md`; inspected reference CloudFormation parameters; populated this README with requirements, planned commands, verification, and logging rules. | Documentation only. No application code, Git commits/pushes, or AWS resources changed. | User/assistant executes step 1 and records results here. |
 
 Verification of this documentation update: assistant ran `git diff --check`, `Get-Item 01_ServerDeployment/project/README.md | Select-Object Length`, and `git diff --stat`. The checks succeeded; Git reported only its configured LF-to-CRLF conversion warning. The diff contained the project README update only. This verification result was then appended here.
+
+JWT explanation update (2026-11-09, assistant): read the opening section with `Get-Content 01_ServerDeployment/project/README.md | Select-Object -First 48`, then added the temporary-access-pass mental model, endpoint flow, claims, signing-secret distinction, and security considerations using `apply_patch`. Documentation only; no application or AWS changes. Verification command: `git diff --check`.
+
+JWT storage explanation update (2026-11-09, assistant): used `apply_patch` to document client-side token storage, the temporary `TOKEN` shell variable and `unset TOKEN`, browser storage examples, and the distinction between issued JWTs and backend `JWT_SECRET` storage. Documentation only; no application or AWS changes. Verification: `git diff --check`.
 
 For future entries, use: date/time (Europe/Budapest), actor, exact sanitized command or console action, result, verification/evidence, and next action. Include unsuccessful attempts and their resolution.
 
