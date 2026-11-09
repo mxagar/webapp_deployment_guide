@@ -196,9 +196,43 @@ Table of Contents:
       - [2. Configure and deploy the pipeline](#2-configure-and-deploy-the-pipeline)
       - [3. Add automated tests](#3-add-automated-tests)
     - [Part 2 B: Create EKS Cluster and IAM Role](#part-2-b-create-eks-cluster-and-iam-role)
+      - [Prerequisites and working context](#prerequisites-and-working-context)
+      - [1. Create and verify the EKS cluster](#1-create-and-verify-the-eks-cluster)
+        - [Cleanup reminder for after project feedback](#cleanup-reminder-for-after-project-feedback)
+      - [2. Create or reuse the IAM role for CodeBuild](#2-create-or-reuse-the-iam-role-for-codebuild)
+        - [Get the account ID and prepare the trust policy](#get-the-account-id-and-prepare-the-trust-policy)
+        - [Create the role and attach its permissions](#create-the-role-and-attach-its-permissions)
+      - [3. Authorize the role through Kubernetes RBAC](#3-authorize-the-role-through-kubernetes-rbac)
+        - [Fetch the live ConfigMap](#fetch-the-live-configmap)
+        - [Edit the role mapping](#edit-the-role-mapping)
+        - [Patch the ConfigMap and verify](#patch-the-configmap-and-verify)
     - [Part 2 C: Deployment to Kubernetes Using CodePipeline and CodeBuild](#part-2-c-deployment-to-kubernetes-using-codepipeline-and-codebuild)
+      - [1. Generate a GitHub access token](#1-generate-a-github-access-token-1)
+      - [2. Create the pipeline resources with CloudFormation](#2-create-the-pipeline-resources-with-cloudformation)
+        - [2.1. Set the parameters](#21-set-the-parameters)
+        - [2.2. Review the resources](#22-review-the-resources)
+        - [2.3. Create and monitor the stack](#23-create-and-monitor-the-stack)
+      - [3. Store the signing secret and supply it to the application](#3-store-the-signing-secret-and-supply-it-to-the-application)
+        - [Supply the same value at Pod startup](#supply-the-same-value-at-pod-startup)
+      - [4. Understand and configure buildspec.yml](#4-understand-and-configure-buildspecyml)
+        - [4.1. Check the client version and parameter mapping](#41-check-the-client-version-and-parameter-mapping)
+        - [4.2. Follow the build phases](#42-follow-the-build-phases)
+      - [5. Diagnose a failed build](#5-diagnose-a-failed-build)
+        - [Kubernetes rejects the build's identity](#kubernetes-rejects-the-builds-identity)
+        - [A standalone CodeBuild start lacks pipeline artifacts](#a-standalone-codebuild-start-lacks-pipeline-artifacts)
+      - [6. Trigger and verify the working project](#6-trigger-and-verify-the-working-project)
+        - [6.1. Push a commit to the monitored branch](#61-push-a-commit-to-the-monitored-branch)
+        - [6.2. Inspect the pipeline and build history](#62-inspect-the-pipeline-and-build-history)
+        - [6.3. Test the deployed endpoints](#63-test-the-deployed-endpoints)
     - [Part 2 D: Adding Tests to the Build](#part-2-d-adding-tests-to-the-build)
+      - [1. Add the test command](#1-add-the-test-command)
+      - [2. Prove that a failing test blocks deployment](#2-prove-that-a-failing-test-blocks-deployment)
     - [Cleaning Up](#cleaning-up)
+      - [1. Select the project and record retained resource names](#1-select-the-project-and-record-retained-resource-names)
+      - [2. Required: remove the pipeline stack](#2-required-remove-the-pipeline-stack)
+      - [3. Required: remove the load balancer and cluster](#3-required-remove-the-load-balancer-and-cluster)
+      - [4. Required for no remaining storage costs: remove retained data](#4-required-for-no-remaining-storage-costs-remove-retained-data)
+      - [5. Optional: remove unused access, secrets, and local files](#5-optional-remove-unused-access-secrets-and-local-files)
     - [Project Rubric](#project-rubric)
 
 ## Introduction
@@ -4251,6 +4285,8 @@ Each part begins with an introductory video.
 
 The CI/CD pipeline connects your GitHub repository to an **Amazon Elastic Kubernetes Service (EKS)** cluster. A provided **AWS CloudFormation** template (`.yaml`) creates the pipeline resources programmatically, including AWS CodeBuild and AWS CodePipeline. These related AWS resources form a **stack**.
 
+**IMPORTANT:** The project is very similar to the *Final Pipeline* exercise described above. Therefore, I have avoided adding unnecessary screenshots again.
+
 #### How the pipeline works
 
 ![Overarching diagram of the final deployed application showing continuous integration and continuous delivery pipeline as described below](./project/assets/project_overciew.png)
@@ -4934,9 +4970,448 @@ kubectl get nodes
 
 ### Part 2 C: Deployment to Kubernetes Using CodePipeline and CodeBuild
 
+Connect the prepared EKS cluster and deployment role to a GitHub-triggered pipeline. Work from `01_ServerDeployment/project/udacity_server_deployment_exercises_cd0157/`, using the AWS profile, region, and authorized Kubernetes context established in Part 2 B.
+
+#### 1. Generate a GitHub access token
+
+Create a **personal access token (classic)** through [GitHub's token settings](https://github.com/settings/tokens/). This exercise retains the template's GitHub OAuth source action.
+
+- Select `repo` (**Full control of private repositories**) for repository access. AWS also documents `admin:repo_hook` for repository-hook access when using webhook triggers.
+- Choose an expiration and save the token securely. Treat it like a password: its scopes determine which repository operations a service can perform.
+- Supply it to CloudFormation when creating the stack. CodePipeline's source action uses it to retrieve source changes; CodeBuild runs the build that CodePipeline starts.
+
+#### 2. Create the pipeline resources with CloudFormation
+
+Use the supplied [`ci-cd-codepipeline.cfn.yml`](./project/udacity_server_deployment_exercises_cd0157/ci-cd-codepipeline.cfn.yml). Writing this template from scratch is outside the course's scope; review its parameters and resources instead.
+
+For a visual representation, open it in **Infrastructure Composer** in the CloudFormation console, the current replacement for the video's Template Designer.
+
+##### 2.1. Set the parameters
+
+Open the template's `Parameters` section, update the non-secret defaults for your account and repository, and save the file. Verify the same values when creating the stack:
+
+| Parameter | Value for this project |
+| --- | --- |
+| `EksClusterName` | `simple-jwt-api`, matching Part 2 B |
+| `GitSourceRepo` | `udacity_server_deployment_exercises_cd0157` — repository name, not its URL |
+| `GitBranch` | `master`, the branch monitored in this fork |
+| `GitHubUser` | `mxagar`, or your own fork's owner |
+| `CodeBuildDockerImage` | `aws/codebuild/standard:8.0`, matching the Python 3.13 build runtime |
+| `KubectlRoleName` | `UdacityFlaskDeployCBKubectlRole`, created or reused earlier |
+
+**Keep `GitHubToken` out of the template:** enter it only in the CloudFormation parameter field. It is declared `NoEcho` to mask normal parameter displays. In console fields, enter values without literal surrounding quotes; normal YAML quoting rules still apply inside the template.
+
+The screenshots show the course's original values and interface; use the current values above for this fork.
+
+![Update your Github username in the template file](./project/assets/template_update.jpeg)
+
+##### 2.2. Review the resources
+
+The template provisions:
+
+- An **Amazon Elastic Container Registry (ECR)** repository for application images.
+- An **Amazon Simple Storage Service (S3)** bucket for pipeline artifacts.
+- **AWS Identity and Access Management (IAM)** roles assumed by the pipeline's services.
+- A Lambda helper and custom resource that add the generated CodeBuild service role to the manual deployment role's trust relationship.
+- The CodeBuild project and CodePipeline pipeline.
+
+![Screenshot showing resources that will be created using the ci-cd-codepipeline.cfn.yml template](./project/assets/template_structure.png)
+
+##### 2.3. Create and monitor the stack
+
+In the **CloudFormation console**, select the same region as the EKS cluster, then:
+
+1. Choose **Create stack -> With new resources (standard)**. Under **Specify template**, select **Template is ready -> Upload a template file**, upload `ci-cd-codepipeline.cfn.yml`, and choose **Next**.
+2. Under **Specify stack details**, enter a stack name, such as `simple-jwt-api-pipeline`. Check the repository owner, name, branch, cluster, image, and role values, then paste the GitHub token into `GitHubToken`.
+3. Leave the stack options at their defaults unless your exercise requires otherwise. Review the settings, acknowledge the required IAM-resource capabilities, and submit.
+4. Monitor the stack's status and **Events**. Creation commonly takes 5–15 minutes; successful completion creates the resources reviewed above.
+
+If CloudFormation reports `Template format error`, inspect the reported line and YAML indentation. The course suggests [YAML Validator](https://codebeautify.org/yaml-validator) or [YAML Lint](http://www.yamllint.com/) for checking the template.
+
+A new pipeline normally starts an execution automatically. If `JWT_SECRET` has not been created yet, its first build can fail during parameter retrieval; complete step 3 before retrying.
+
+#### 3. Store the signing secret and supply it to the application
+
+The `/auth` endpoint needs `JWT_SECRET` to sign tokens. Store its value as a `SecureString` in [AWS Systems Manager Parameter Store](https://docs.aws.amazon.com/systems-manager/latest/userguide/systems-manager-parameter-store.html):
+
+```bash
+export JWT_SECRET="$(uv run --locked python -c 'import secrets; print(secrets.token_hex(32))')"
+aws ssm put-parameter \
+  --name JWT_SECRET \
+  --overwrite \
+  --value "$JWT_SECRET" \
+  --type SecureString
+
+# Verify the parameter metadata without displaying its decrypted value.
+aws ssm get-parameter --name JWT_SECRET \
+  --query 'Parameter.{Name:Name,Type:Type,Version:Version}' --output table
+```
+
+Use `--overwrite` for this exercise's parameter when intentionally replacing its value.
+
+##### Supply the same value at Pod startup
+
+The buildspec's Parameter Store mapping configures the **CodeBuild environment**. Configure the application containers to receive the value too: copy the stored value into a Kubernetes Secret in the application's namespace, using your authorized cluster context.
+
+```bash
+JWT_SECRET=$(aws ssm get-parameter --name JWT_SECRET --with-decryption \
+  --query 'Parameter.Value' --output text)
+
+kubectl create secret generic jwt-secret --namespace default \
+  --from-literal=JWT_SECRET="$JWT_SECRET" \
+  --dry-run=client -o yaml | kubectl apply -f -
+unset JWT_SECRET
+```
+
+In [`simple_jwt_api.yml`](./project/udacity_server_deployment_exercises_cd0157/simple_jwt_api.yml), add this `env` block inside the existing `spec.template.spec.containers` entry named `simple-jwt-api`, alongside its `image`, `securityContext`, and `ports` settings:
+
+```yaml
+env:
+  - name: JWT_SECRET
+    valueFrom:
+      secretKeyRef:
+        name: jwt-secret
+        key: JWT_SECRET
+```
+
+Commit the manifest reference with your deployment changes; keep the secret value out of Git and the Docker image. Each newly started Pod reads the Kubernetes Secret. If you later replace the stored value, repeat the copy and roll out new Pods so they receive it.
+
+After project submission and feedback, you may delete the Parameter Store entry if no other workload needs it:
+
+```bash
+# Optional cleanup after feedback.
+aws ssm delete-parameter --name JWT_SECRET
+```
+
+#### 4. Understand and configure buildspec.yml
+
+CodeBuild reads [`buildspec.yml`](./project/udacity_server_deployment_exercises_cd0157/buildspec.yml) from the root of the source repository. A buildspec defines build commands and related settings; this project retains the course's `install`, `pre_build`, `build`, and `post_build` phase order.
+
+##### 4.1. Check the client version and parameter mapping
+
+The project targets Kubernetes 1.37 and pins `KUBECTL_VERSION` to `v1.37.2`. Check the local client with:
+
+```bash
+kubectl version --client
+```
+
+Use a client within **one minor version of the EKS control plane**, and check the CodeBuild version output too. The video's 1.16/1.18 comparison exceeds that supported difference. CodeBuild runs in Linux containers, so its download must be the Linux binary for the build environment's architecture. See the [EKS kubectl instructions](https://docs.aws.amazon.com/eks/latest/userguide/install-kubectl.html) or [Kubernetes Linux installation instructions](https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/).
+
+Keep a single `env` section at the end of the buildspec, preserving its shell, version variable, and secret mapping:
+
+```yaml
+env:
+  shell: bash
+  variables:
+    # Match the cluster's Kubernetes minor version; update this pin for another cluster version.
+    KUBECTL_VERSION: v1.37.2
+  parameter-store:
+    JWT_SECRET: JWT_SECRET
+```
+
+The left-hand `JWT_SECRET` is the build environment variable; the right-hand value is the parameter name. The CodeBuild service role needs `ssm:GetParameters` to retrieve it.
+
+##### 4.2. Follow the build phases
+
+- **`install`:** Starts Docker, selects Python 3.13, downloads and checksum-verifies kubectl, updates `PATH`, installs uv 0.13.7 and jq, and checks the AWS CLI v2 already supplied by the build image. AWS CLI v2 provides EKS token authentication, replacing the video's separate `aws-iam-authenticator` download.
+- **`pre_build`:** Generates an image tag, substitutes it for `CONTAINER_IMAGE` in the manifest, logs Docker into ECR with `get-login-password`, sets `KUBECONFIG`, and runs `uv sync --locked`.
+- **`build`:** Builds the application image from the Python 3.13 Dockerfile and its locked runtime dependencies.
+- **`post_build`:** Pushes the image to ECR, updates kubeconfig using the deployment role, applies `simple_jwt_api.yml`, and writes `build.json` as the output artifact.
+
+CodeBuild logs show these commands in execution order. Keep the explanatory comments and diagnostic `echo` statements: version and path output help connect a logged failure to its buildspec command. Avoid echoing secret values.
+
+![Screenshot showing phases in buildspec.yml file highlighted in yellow](./project/assets/buildspec_details.png)
+
+#### 5. Diagnose a failed build
+
+Open **CodeBuild -> your project -> Build history**, select the failed run, and inspect its logs. Read the lines **before** a generic exit-status message: for example, `kubectl apply` exiting with status 1 identifies the failed command, while the preceding server response explains why.
+
+##### Kubernetes rejects the build's identity
+
+```text
+Error: You must be logged in to the server (the server has asked for the client to provide credentials)
+```
+
+Check the deployment-role ARN, its trust relationship and AWS permissions, and its Kubernetes mapping from Part 2 B. To refresh that mapping, fetch the current ConfigMap using an identity that already has cluster administrator access:
+
+```bash
+AUTH_PATCH=/tmp/aws-auth-patch.yml
+kubectl get configmap/aws-auth --namespace kube-system -o yaml > "$AUTH_PATCH"
+```
+
+Edit `data.mapRoles` as described in Part 2 B, preserving existing entries and inserting the correct account and deployment role. Then patch from the edited file:
+
+```bash
+kubectl patch configmap/aws-auth --namespace kube-system \
+  --type merge --patch-file "$AUTH_PATCH"
+```
+
+##### A standalone CodeBuild start lacks pipeline artifacts
+
+```text
+Build failed to start. The following error occurred: ArtifactsOverride must be set when using artifacts type CodePipelines
+```
+
+This project uses `CODEPIPELINE` source and artifacts, so CodePipeline supplies the build's input and manages its outputs. Start the **complete pipeline** with **CodePipeline -> your pipeline -> Release change**, or push a commit as shown below.
+
+Also review **CloudFormation -> your stack -> Parameters** to confirm that the repository, branch, cluster, and role match the resources you created.
+
+![Review your CloudFormation console &#8594;  your Stack &#8594;  Stack parameters](./project/assets/cloudformation_review.jpeg)
+
+#### 6. Trigger and verify the working project
+
+##### 6.1. Push a commit to the monitored branch
+
+Verify that `origin` points to your own fork rather than Udacity's repository, then commit the intended project changes:
+
+```bash
+# Check the destination and current changes.
+git remote -v
+git status
+
+# Stage the deployment manifest updated in step 3.
+# Stage any other intended project changes explicitly too.
+git add simple_jwt_api.yml
+git commit -m "Configure the application deployment"
+# Push this fork's local master branch to the monitored remote master branch.
+git push origin master
+```
+
+If you use a different fork or branch, configure the matching template parameters and push destination.
+
+##### 6.2. Inspect the pipeline and build history
+
+In the **CodePipeline dashboard**, select the stack's region and open the pipeline. Confirm that the source stage picks up the new commit, the build starts, and the execution succeeds.
+
+Open the corresponding CodeBuild project to inspect successful and failed runs, stream an in-progress build's logs, and see each buildspec command's output. To demonstrate the trigger again, make a small comment-only change in `test_main.py`, commit it, and push it; a new execution should appear shortly afterward.
+
+The next section adds the automated test gate. The current buildspec installs pytest through uv but does not yet run those tests during the pipeline.
+
+##### 6.3. Test the deployed endpoints
+
+Confirm that the Deployment rolls out, then get the Service's external address:
+
+```bash
+kubectl rollout status deployment/simple-jwt-api --namespace default --timeout=180s
+kubectl get services simple-jwt-api --namespace default -o wide
+```
+
+The `EXTERNAL-IP` field may contain a load-balancer hostname. Wait for provisioning and DNS resolution if it is initially pending or unavailable, then set the URL with an explicit `http://` scheme for the Service's port 80:
+
+```bash
+BASE_URL="http://YOUR_LOAD_BALANCER_HOSTNAME"
+curl --fail-with-body --silent --show-error "$BASE_URL/"
+
+TOKEN=$(curl --fail-with-body --silent --show-error \
+  --request POST "$BASE_URL/auth" \
+  --header 'Content-Type: application/json' \
+  --data '{"email":"abc@xyz.com","password":"WindowsPwd"}' \
+  | jq -er '.token')
+export TOKEN
+
+# Verify the token and return its claims.
+curl --fail-with-body --silent --show-error \
+  "$BASE_URL/contents" \
+  --header "Authorization: Bearer ${TOKEN}" \
+  | jq .
+```
+
+Expect `"Healthy"` from the health check, a token from `/auth`, and the email plus `exp` and `nbf` claims from `/contents`. These operations sign and verify tokens; they do not encrypt and decrypt their contents.
+
+**Save the external URL for the project reviewer** and keep the deployment available through the review period. Use the cleanup instructions after receiving feedback.
+
 ### Part 2 D: Adding Tests to the Build
+
+Require the unit tests to pass before publishing an image or updating the cluster. Reuse the Python 3.13 and uv environment from the earlier sections.
+
+#### 1. Add the test command
+
+Open [`buildspec.yml`](./project/udacity_server_deployment_exercises_cd0157/buildspec.yml). Its `pre_build` phase already runs `uv sync --locked`, which installs pytest from the project's development dependency group. Add the test command immediately afterward:
+
+```yaml
+pre_build:
+  commands:
+    # Keep the existing tag, image substitution, ECR login, and kubeconfig commands above.
+    # Replaces pip install -r requirements.txt; includes the pytest development dependency.
+    - uv sync --locked
+    - uv run --locked python -m pytest test_main.py
+```
+
+This is the **tail of the existing phase**, not a replacement for all its commands. Keep the other commands and explanatory comments in their original positions. uv selects the project interpreter and locked dependencies, so separate pip/pip3 installs and python/python3 workarounds are unnecessary.
+
+Add a success check as the **first command in `post_build`**, before the existing image push:
+
+```yaml
+post_build:
+  commands:
+    # Require earlier phases to succeed before publishing or deploying.
+    - test "$CODEBUILD_BUILD_SUCCEEDING" = "1"
+    - docker push $REPOSITORY_URI:$TAG
+    # Keep the remaining existing post_build commands here.
+```
+
+[CodeBuild sets this status variable](https://docs.aws.amazon.com/codebuild/latest/userguide/build-env-ref-env-vars.html) to `1` while the build is succeeding and `0` after a failure. The check makes the deployment phase reject a failed build instead of relying only on the final pipeline status.
+
+Save the file, then confirm the tests pass locally from the project submodule:
+
+```bash
+uv run --locked python -m pytest test_main.py
+```
+
+#### 2. Prove that a failing test blocks deployment
+
+1. Open `test_main.py` and temporarily add this assertion inside a test, such as `test_health`:
+
+```python
+assert False, "Intentional check: this commit must not deploy"
+```
+
+2. Run the local test command again and confirm it fails. Commit the intended `buildspec.yml` and test-file changes, then push to the monitored GitHub branch as described in Part 2 C.
+3. Open [CodePipeline in the project's region](https://console.aws.amazon.com/codesuite/codepipeline/start?region=eu-central-1). Check the CodeBuild logs for the intentional assertion failure. Verify that the failing execution does not publish the new image or run the deployment commands; the previously deployed application should remain running.
+4. Remove the temporary assertion, rerun the tests, and commit and push the fix. Confirm that the next execution succeeds and deploys normally.
+
+Finish with passing tests in the submitted repository. The intentional failure is a demonstration of the gate, not a permanent test.
 
 ### Cleaning Up
 
+Clean up **after submission and reviewer feedback**, once the reviewer no longer needs the application URL.
+
+- **Required to stop ongoing costs:** remove the project's pipeline, load balancer, EKS cluster and nodes, then retained images, artifacts, and logs. Compute and networking are the main priority; stored data can also incur charges.
+- **Optional housekeeping:** remove the manual IAM role, obsolete access mappings, standard Parameter Store parameter, token, and local Docker resources. Keeping these has different cost implications from keeping a running cluster, as explained below.
+
+If you keep a cluster or data for another exercise, its applicable charges continue. Skip resources you have already removed.
+
+#### 1. Select the project and record retained resource names
+
+Wait for active pipeline executions and builds to finish, and avoid further pushes during cleanup. Run the following Bash blocks in the same terminal:
+
+```bash
+export AWS_PROFILE="deployment-course"
+export AWS_DEFAULT_REGION="eu-central-1"
+STACK_NAME="simple-jwt-api-pipeline"
+CLUSTER_NAME="simple-jwt-api"
+EKS_PROFILE="$AWS_PROFILE"
+
+aws sts get-caller-identity
+```
+
+`STACK_NAME` must be the name you entered in Part 2 C. `EKS_PROFILE` must identify a Kubernetes administrator for this cluster: use the creator profile from Part 2 B, or another already-authorized profile if you reused a cluster. AWS permissions alone do not guarantee Kubernetes access.
+
+Before deleting the stack, open **CloudFormation -> your stack -> Resources** and record the physical names of:
+
+- `EcrDockerRepository`: the image repository.
+- `CodePipelineArtifactBucket`: the artifact bucket.
+- `CustomResourceLambda`: its function name identifies the Lambda log group.
+
+#### 2. Required: remove the pipeline stack
+
+```bash
+aws cloudformation delete-stack --stack-name "$STACK_NAME"
+aws cloudformation wait stack-delete-complete --stack-name "$STACK_NAME"
+```
+
+This removes CodePipeline, CodeBuild, the helper Lambda, and their stack-managed IAM roles, preventing further pipeline-triggered builds and deployments. If deletion fails or the wait command times out, inspect the stack's **Events** and resolve the reported issue.
+
+The separately created cluster and manual IAM role remain. The template also uses [`DeletionPolicy: Retain`](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-attribute-deletionpolicy.html) for ECR and S3, so their contents require step 4.
+
+#### 3. Required: remove the load balancer and cluster
+
+Refresh kubeconfig with the authorized cluster profile and verify access:
+
+```bash
+aws eks update-kubeconfig \
+  --name "$CLUSTER_NAME" \
+  --region "$AWS_DEFAULT_REGION" \
+  --profile "$EKS_PROFILE"
+kubectl get services --all-namespaces
+```
+
+If the listing returns `Unauthorized`, correct `EKS_PROFILE` before continuing. Delete the project's Service while Kubernetes is still running so it can release the AWS load balancer, then remove the Deployment:
+
+```bash
+kubectl delete service simple-jwt-api --namespace default --wait=true
+kubectl delete deployment simple-jwt-api --namespace default --wait=true
+```
+
+Verify that the matching load balancer disappears from **EC2 -> Load Balancers**. Remove any other exercise LoadBalancer Services or Ingresses before deleting the cluster, following the [EKS deletion prerequisites](https://docs.aws.amazon.com/eks/latest/userguide/delete-cluster.html).
+
+If the cluster is dedicated to this project and no longer needed:
+
+```bash
+AWS_PROFILE="$EKS_PROFILE" eksctl delete cluster \
+  --name "$CLUSTER_NAME" \
+  --region "$AWS_DEFAULT_REGION" \
+  --profile "$EKS_PROFILE" \
+  --wait
+```
+
+Wait for completion; repeated CloudFormation waiting messages are progress checks. Verify that the `eksctl-simple-jwt-api-*` stacks finish deleting and their EC2 instances, EBS volumes, NAT gateways, and allocated public IP addresses are released. EKS control-plane and node charges continue while those resources remain.
+
+#### 4. Required for no remaining storage costs: remove retained data
+
+Using the physical names saved in step 1:
+
+- **ECR -> Private repositories:** delete the exercise repository, including all its images.
+- **S3:** select the artifact bucket, choose **Empty**, then **Delete**. Empty all object versions and delete markers too; `aws s3 rm --recursive` alone does not empty a versioned bucket.
+- **CloudWatch -> Logs -> Log groups:** delete `/aws/codebuild/<STACK_NAME>`, `/aws/lambda/<recorded-function-name>`, and any exercise EKS control-plane log group you enabled. These groups are not declared as resources in this template and can survive stack deletion.
+- **Parameter Store, if using the Advanced tier:** delete the exercise's `JWT_SECRET` parameter when unused. Advanced parameters have ongoing storage charges; Standard parameters can be handled as optional housekeeping below. Check the tier in the console and [AWS's Parameter Store pricing](https://aws.amazon.com/systems-manager/pricing/).
+
+You may retain images, artifacts, or logs for reference, but their applicable storage charges continue. Review failed deletions and project-tagged resources in the AWS console; stack deletion alone does not establish that cleanup is complete.
+
+#### 5. Optional: remove unused access, secrets, and local files
+
+**Manual IAM role:** [IAM has no direct usage charge](https://docs.aws.amazon.com/IAM/latest/UserGuide/getting-started.html), so `UdacityFlaskDeployCBKubectlRole` and its inline policy may remain for reuse. If no other pipeline needs the role, you can remove them:
+
+```bash
+aws iam delete-role-policy \
+  --role-name UdacityFlaskDeployCBKubectlRole --policy-name eks-describe
+aws iam delete-role --role-name UdacityFlaskDeployCBKubectlRole
+```
+
+If you remove the role but keep the cluster, first remove only its entry from `data.mapRoles` with `kubectl edit configmap aws-auth --namespace kube-system`, preserving node-role mappings and other entries. A deleted cluster has already removed that ConfigMap and the project's Kubernetes Secret.
+
+**Standard Parameter Store parameter:** retaining a Standard `JWT_SECRET` parameter has no additional storage charge; higher-throughput API usage can still be billed. Delete it if it belongs only to this project and you no longer need it:
+
+```bash
+aws ssm delete-parameter --name JWT_SECRET
+```
+
+The same command removes an Advanced parameter from step 4. If you kept the cluster, optionally delete its unused `jwt-secret` with `kubectl delete secret jwt-secret --namespace default`.
+
+**Credentials and local resources:** revoke the exercise-only GitHub token, remove its saved value and the local `.env_file`, and discard the temporary `aws-auth` export when no longer needed. Local Docker resources do not generate AWS charges; stop and remove `myContainer` and remove `myimage` using the commands from Part 1 B if you no longer need them.
+
+
 ### Project Rubric
 
+Use this rubric to check the required submission evidence. The optional suggestions at the end are separate from the assessed criteria.
+
+#### Running Locally and Containerization
+
+| Criteria | Submission Requirements |
+| --- | --- |
+| Set up a valid Dockerfile. | The Dockerfile builds successfully on the local machine using Docker. |
+| Include the correct container commands. | Install the application dependencies and run the app with a Gunicorn Web Server Gateway Interface (WSGI) server.<br>The original rubric specifies `python:stretch` as the source image.<br>Use the entry point `["gunicorn", "-b", ":8080", "main:APP"]`. |
+| Run the Docker image and verify its endpoints. | The container starts correctly, and all three endpoints respond as described in the README. |
+| Set the required environment variable. | Configure the JSON Web Token (JWT) signing secret, `JWT_SECRET`, correctly in a file such as `.env_file` and supply it to the container. |
+
+**Version note:** The `python:stretch` instruction above is retained from the original rubric. This guide's updated starter uses `python:3.13-slim` and uv, with the same Gunicorn entry point.
+
+#### Using CodePipeline and CodeBuild to Deploy
+
+| Criteria | Submission Requirements |
+| --- | --- |
+| Load `JWT_SECRET` from Parameter Store. | Configure `buildspec.yml` so CodeBuild retrieves the variable from AWS Systems Manager Parameter Store. |
+| Set defaults in the pipeline template. | Set the EKS cluster name, GitHub repository name, GitHub owner, and kubectl role through `EksClusterName`, `GitSourceRepo`, `GitHubUser`, and `KubectlRoleName`. |
+| Provide the Service's external address. | Include its external IP address or load-balancer hostname/URL in the project's reviewer notes. |
+| Run the API successfully on EKS. | The application programming interface (API) runs on Amazon Elastic Kubernetes Service (EKS), and its endpoints respond as expected through the Elastic Load Balancing (ELB) URL. |
+
+#### Setting Up CodeBuild to Run Tests
+
+| Criteria | Submission Requirements |
+| --- | --- |
+| Run the tests in CodeBuild. | Add the appropriate test-execution commands to `buildspec.yml` so the tests run as part of the build. |
+
+#### Suggestions to Make Your Project Stand Out
+
+- Add additional endpoints to the Flask application.
+- Add custom alert messages that identify more specific continuous integration/continuous delivery (CI/CD) pipeline failure reasons.
