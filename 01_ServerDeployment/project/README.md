@@ -530,12 +530,18 @@ The implementation plan was to retain the existing API/runtime, complete the thr
 
 Local secret persistence (2026-11-09, assistant): checked `.env` absence with `Test-Path`, verified `git -C 01_ServerDeployment/project/udacity_server_deployment_exercises_cd0157 check-ignore .env`, and inspected `.dockerignore`. Created `.env` with PowerShell `[System.Security.Cryptography.RandomNumberGenerator]::GetBytes(32)` encoded with `[Convert]::ToHexString`, using `System.IO.FileMode.CreateNew` to avoid overwriting an existing file. Wrote only `JWT_SECRET=<generated value>` and a newline using ASCII encoding; verified the expected 64-hex-character format without printing the value. Confirmed Git ignores the file and Docker excludes `.env*`. Added the runtime instructions above and ran `git diff --check`. No AWS secret was created or changed.
 
+### Publishing the fork — 2026-11-09
+
+The user requested pushing the project submodule changes. Inspection found they had already been committed as `ba5983b8d7e1b61247c2d851cd94578d21d45778` (three configuration files only) in detached HEAD; no additional commit was needed. `.env` remains ignored and untracked. The assistant checked `git status --short`, `git remote -v`, `git branch -avv`, `git diff --check`, `git diff --stat`, `git check-ignore .env`, `git ls-files .env`, `git show --stat --oneline HEAD`, and the commit diff. Ran `git fetch origin master` successfully, then checked ancestry with `git merge-base --is-ancestor origin/master HEAD` and `git merge-base --is-ancestor master HEAD`. Next: fast-forward local `master`, push normally, and verify the remote commit. The initial implementation's statements that changes were uncommitted describe its earlier state, before this existing commit was observed.
+
+Publishing result (2026-11-09, assistant): successfully ran `git switch master`, `git merge --ff-only ba5983b8d7e1b61247c2d851cd94578d21d45778`, and `git push origin master`. GitHub advanced `master` from `52ce056` to `ba5983b`. Verified with `git ls-remote origin refs/heads/master`: remote commit is `ba5983b8d7e1b61247c2d851cd94578d21d45778`. Final `git status --short` is empty, `git branch --show-current` is `master`, `git check-ignore .env` confirms exclusion, and `git ls-files .env` is empty. The parent README update and any parent submodule-pointer change were not committed or pushed by this action. The user's checklist step 1 (publishing the configuration) is now complete; proceed to tool verification and AWS sign-in.
+
 For future entries, use: date/time (Europe/Budapest), actor, exact sanitized command or console action, result, verification/evidence, and next action. Include unsuccessful attempts and their resolution.
 
 ## Reviewer evidence
 
 - External application URL: pending.
-- Source repository and final commit: pending.
+- Source repository: `https://github.com/mxagar/udacity_server_deployment_exercises_cd0157`, branch `master`; initial implementation published at `ba5983b8d7e1b61247c2d851cd94578d21d45778`. Final deployment/test-gate correction commit remains pending.
 - Passing local tests and Docker endpoint checks: 2026-11-09, 11 pytest cases passed; Docker image built; health/auth/contents and missing/invalid token HTTP checks passed. See implementation session log.
 - Successful pipeline/build execution: pending.
 - Failed-test execution and proof publication/deployment were blocked: pending.
