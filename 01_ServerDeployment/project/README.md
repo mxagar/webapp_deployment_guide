@@ -2,6 +2,8 @@
 
 This README is the project's requirements checklist, execution guide, and activity log. The detailed [course instructions](../README.md#project-deploy-your-flask-app-to-kubernetes-using-eks) remain the source for the assignment and rubric.
 
+I forked the starter/original repo to []().
+
 ## Documentation rule
 
 Every project action performed by the user or assistant must be recorded here: local edits, tests, Git operations, AWS console changes, AWS CLI commands, `eksctl` commands, Kubernetes commands, failures, retries, verification, and cleanup.
