@@ -161,7 +161,7 @@ Every project action performed by the user or assistant must be recorded here: l
 | Secret delivery | Parameter Store `SecureString` retrieved by CodeBuild; Kubernetes Secret supplies the same value to Pods. | Pending |
 | Build gate | pytest runs before image build; failed builds cannot publish or deploy. | Verified live in Part 2 D, 2026-11-11 |
 | Deployment | Image pushed to ECR; manifest applied; rollout completes; external Service URL serves all three endpoints. | Verified for corrected commit `7c9bf6e`; three ready replicas |
-| Evidence | Reviewer URL, successful pipeline execution, failed-test gate demonstration, and corrected successful execution recorded. Final tests pass. | Recorded below and in `evidence/part2d/` |
+| Evidence | Reviewer URL, successful pipeline execution, failed-test gate demonstration, and corrected successful execution recorded. Final tests pass. | Recorded below and in the fork's `evidence/` directory |
 | Cleanup | After review, delete pipeline, load balancer, cluster/nodes, and unwanted retained storage/logs; verify removal. | Deferred until after review |
 
 The original rubric mentions `python:stretch`; this guide explicitly updates it to Python 3.13 slim and uv. Additional endpoints and custom failure alerts are optional. The starter issues tokens from supplied fields; user-database authentication is outside this assignment.
@@ -659,10 +659,10 @@ User requested implementing all of Part 2 D, including its temporary failing-tes
 Execution checklist:
 
 - [x] Inspect Part 2 D, existing test gate/tests, clean fork branch, remote, and live successful baseline. Initial uv cache access was sandbox-blocked; approved retry passed all 11 cases.
-- [x] Save sanitized baseline image, replica, endpoint, and ECR evidence in [baseline.json](./evidence/part2d/baseline.json): healthy endpoint, three ready replicas, deployment revision 2, and two ECR images.
+- [x] Save sanitized baseline image, replica, endpoint, and ECR evidence in [baseline.json](./udacity_server_deployment_exercises_cd0157/evidence/baseline.json): healthy endpoint, three ready replicas, deployment revision 2, and two ECR images.
 - [x] Add the prescribed temporary assertion inside `test_health`, verify local failure, commit/push to the monitored fork branch, and wait for the triggered pipeline.
-- [x] Verify the pipeline fails on pytest, publishes no new image, and leaves the baseline deployment healthy and unchanged. Saved [failed-run.json](./evidence/part2d/failed-run.json).
-- [x] Remove the assertion, rerun all tests, commit/push the correction, and verify a new successful pipeline/rollout and live API checks. Saved [restored-run.json](./evidence/part2d/restored-run.json).
+- [x] Verify the pipeline fails on pytest, publishes no new image, and leaves the baseline deployment healthy and unchanged. Saved [failed-run.json](./udacity_server_deployment_exercises_cd0157/evidence/failed-run.json).
+- [x] Remove the assertion, rerun all tests, commit/push the correction, and verify a new successful pipeline/rollout and live API checks. Saved [restored-run.json](./udacity_server_deployment_exercises_cd0157/evidence/restored-run.json).
 - [x] Save execution IDs, commits, results, and commands here; finish with passing tests and a clean fork checkout. Preserved unrelated parent/lab changes.
 
 Progress: inserted the prescribed assertion in `test_health`; local pytest returned exactly one intentional failure and 10 passes. Created commit `d01c8400093f7a11ba43112d6b20ee62eca91dc5`. The first `git push` waited in Git Credential Manager and was canceled; a GitHub connector write attempt returned HTTP 403 and made no change. Git's existing configuration has both `manager` and `store` helpers. Inspected them with `git config --show-origin --get-all credential.helper` and read `git credential-manager github login --help`. Retried successfully using the already-configured store without interactive prompts: `git -c credential.helper= -c credential.helper=store -c credential.interactive=never push origin master` (with `GIT_TERMINAL_PROMPT=0` for that process). No credential values were read or printed and no persistent Git configuration was changed. GitHub change detection then automatically started pipeline execution `8dfc1287-f54e-4bce-af0d-63ebe861a0fd`, with build `simple-jwt-api-pipeline:f7ce2d8b-cd12-44a3-918b-49214350f96f` for the expected failure commit. Results are recorded below.
@@ -678,7 +678,7 @@ Failure result: pipeline and build failed as intended. CloudWatch logs show `Ass
 | CodeBuild run suffix | `f7ce2d8b-cd12-44a3-918b-49214350f96f` | `98bb9388-2e29-4b3c-a0f9-7ed56e4f0e65` |
 | pytest | 1 intentional failure, 10 passed | 11 passed locally and in CodeBuild |
 | Publication/deployment | No push/apply; ECR, revision, image and Pods unchanged | New tag published, rollout completed, 3 ready replicas |
-| Saved results | [failed-run.json](./evidence/part2d/failed-run.json) | [restored-run.json](./evidence/part2d/restored-run.json) |
+| Saved results | [failed-run.json](./udacity_server_deployment_exercises_cd0157/evidence/failed-run.json) | [restored-run.json](./udacity_server_deployment_exercises_cd0157/evidence/restored-run.json) |
 
 Local execution commands (run from the fork's submodule; the assertion was edited with `apply_patch` and later removed):
 
@@ -741,16 +741,23 @@ Saved snapshots used `ConvertTo-Json` / `Set-Content -Encoding utf8` in `evidenc
 
 Submission guidance added (2026-11-11, assistant): user requested a Submission section immediately before Cleaning Up. Inspected the course rubric, fork README/runtime/Dockerfile, saved baseline/restored evidence, and current repository status using `rg`, `Get-Content`, and `git status --short`. Added source/evidence handoff instructions, a criterion-to-evidence table, an explicit `python:stretch` versus `python:3.13-slim` rubric exception note, other modernization/naming changes, copyable reviewer notes with the verified commit/URL/execution IDs, and a final submission/review/cleanup checklist. Distinguished the parent guide's evidence files from the standalone fork and avoided claiming a specific portal upload format or screenshot count. Updated the table of contents. Applied using `apply_patch` and checked formatting/section order and referenced evidence paths. Documentation only; no files were packaged, commits/pushes performed, or submission sent.
 
+Evidence publication review (2026-11-11, assistant): user asked whether the evidence files are dangerous and should be committed. Parsed all three `evidence/part2d/*.json` files, reviewed their fields/selected logs, and scanned for bearer JWTs, AWS access-key identifiers, GitHub token patterns, private-key headers, and secret assignments: no matches. Confirmed `.env` is ignored and absent from tracked submodule files with `git check-ignore .env` and `git ls-files .env`. The snapshots contain account/resource identifiers, ECR image metadata, timestamps, execution/Pod IDs, and the public API address; those expose infrastructure details but do not provide credentials. Consulted official AWS identifier guidance and GitHub secret-handling documentation. Recommended committing these curated snapshots for review, with a private review-accessible destination if infrastructure visibility is a concern. Added the scope/limits of this review to the Submission section using `apply_patch` and checked formatting with `git diff --check`. No evidence was altered, committed, pushed, or removed by this audit.
+
+Evidence relocation and submission notes (2026-11-11, user and assistant): user moved the three snapshots into the forked submodule's `evidence/` directory; inspected with `rg --files`, `Get-ChildItem`, and submodule Git status (evidence additions were already staged). `SUBMISSION.md` existed but was empty on disk. Populated it with reviewer notes, relative evidence links, the explicit relocation note, the evidence safety review/disclosed metadata, verification IDs/results, and declared rubric differences. Updated active evidence links in both parent READMEs and corrected the handoff text to reflect the new location. Historical activity entries retain their original capture paths; current files are now under `udacity_server_deployment_exercises_cd0157/evidence/`. Applied with `apply_patch` and scoped PowerShell text replacements; validated JSON, local links, secret-pattern scans, and `git diff --check`. Evidence contents and existing staging were preserved; no commits or pushes were performed. The unrelated staged deletion of `01_ServerDeployment/.gitignore` was left untouched.
+
+Reviewer-facing submission wording corrected (2026-11-11, assistant): user clarified that `SUBMISSION.md` must address the reviewer. Read the existing file and rewrote its framing, API verification steps, evidence provenance, and safety explanation as direct reviewer notes. Removed author-side instructions about committing, packaging, adding screenshots, or choosing private attachments. Retained the verified application commit, live URL, execution IDs, in-repository evidence links, sanitized-metadata explanation, and declared historical rubric differences. Applied using `apply_patch`; checked evidence-link resolution, matching saved results, and `git diff --check`. No evidence, source behavior, staging, commits, or deployment changed.
+
 For future entries, use: date/time (Europe/Budapest), actor, exact sanitized command or console action, result, verification/evidence, and next action. Include unsuccessful attempts and their resolution.
 
 ## Reviewer evidence
 
+- Submission notes and evidence safety explanation: [SUBMISSION.md](./udacity_server_deployment_exercises_cd0157/SUBMISSION.md); the evidence snapshots now live in that fork's `evidence/` directory.
 - External application URL: [Flask API](http://a801c89a3b3334c9aa490f41d56834f7-6753305.eu-central-1.elb.amazonaws.com).
 - Source repository: `https://github.com/mxagar/udacity_server_deployment_exercises_cd0157`, branch `master`; final test-gate correction commit `7c9bf6e79b512fe32ccd2cf5e187e2d6f92b9f34`, pushed and successfully deployed.
 - Passing local tests and Docker endpoint checks: 2026-11-09, 11 pytest cases passed; Docker image built; health/auth/contents and missing/invalid token HTTP checks passed. See implementation session log.
 - Successful pipeline/build execution: `b3de9dbe-67cb-4e3f-89bd-4580d985e652` / `simple-jwt-api-pipeline:98bb9388-2e29-4b3c-a0f9-7ed56e4f0e65`.
-- Failed-test execution and proof publication/deployment were blocked: `8dfc1287-f54e-4bce-af0d-63ebe861a0fd`; unchanged ECR/deployment/Pods confirmed in [failed-run.json](./evidence/part2d/failed-run.json).
-- Corrected successful execution and live endpoint checks: 11 tests passed, rollout succeeded, 3 updated/ready replicas, API and 401 checks passed; see [restored-run.json](./evidence/part2d/restored-run.json).
+- Failed-test execution and proof publication/deployment were blocked: `8dfc1287-f54e-4bce-af0d-63ebe861a0fd`; unchanged ECR/deployment/Pods confirmed in [failed-run.json](./udacity_server_deployment_exercises_cd0157/evidence/failed-run.json).
+- Corrected successful execution and live endpoint checks: 11 tests passed, rollout succeeded, 3 updated/ready replicas, API and 401 checks passed; see [restored-run.json](./udacity_server_deployment_exercises_cd0157/evidence/restored-run.json).
 - Review completed / cleanup verified: pending.
 
 ## References
