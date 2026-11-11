@@ -159,9 +159,9 @@ Every project action performed by the user or assistant must be recorded here: l
 | Infrastructure | Supplied CloudFormation template provisions CodePipeline, CodeBuild, ECR, S3 artifacts, service roles, and trust-policy helper Lambda. | Pending |
 | Source | Correct repository owner/name/branch and automatic GitHub change detection; GitHub token supplied privately as a template parameter. | Pending |
 | Secret delivery | Parameter Store `SecureString` retrieved by CodeBuild; Kubernetes Secret supplies the same value to Pods. | Pending |
-| Build gate | pytest runs before image build; failed builds cannot publish or deploy. | Pending |
-| Deployment | Image pushed to ECR; manifest applied; rollout completes; external Service URL serves all three endpoints. | Pending |
-| Evidence | Reviewer URL, successful pipeline execution, failed-test gate demonstration, and corrected successful execution recorded. Final tests pass. | Pending |
+| Build gate | pytest runs before image build; failed builds cannot publish or deploy. | Verified live in Part 2 D, 2026-11-11 |
+| Deployment | Image pushed to ECR; manifest applied; rollout completes; external Service URL serves all three endpoints. | Verified for corrected commit `7c9bf6e`; three ready replicas |
+| Evidence | Reviewer URL, successful pipeline execution, failed-test gate demonstration, and corrected successful execution recorded. Final tests pass. | Recorded below and in `evidence/part2d/` |
 | Cleanup | After review, delete pipeline, load balancer, cluster/nodes, and unwanted retained storage/logs; verify removal. | Deferred until after review |
 
 The original rubric mentions `python:stretch`; this guide explicitly updates it to Python 3.13 slim and uv. Additional endpoints and custom failure alerts are optional. The starter issues tokens from supplied fields; user-database authentication is outside this assignment.
@@ -365,6 +365,17 @@ kubectl get nodes
 If a conflict occurs, fetch fresh state and repeat the edit. Record the mapping and verification, without duplicating entries.
 
 ### 6. Create and deliver the signing secret
+
+This step stores the **same signing secret in two places**:
+
+| Location | Resource name | Purpose |
+| --- | --- | --- |
+| AWS Systems Manager → Parameter Store | `JWT_SECRET`, type `SecureString` | Encrypted storage in your selected AWS account and region; CodeBuild retrieves the value using the buildspec's `parameter-store` mapping. |
+| EKS cluster → Kubernetes Secret | `default/jwt-secret`, key `JWT_SECRET` | Supplies the value to the Flask Pods through the manifest's `secretKeyRef`. |
+
+The flow is: generate a value in your terminal → send it to Parameter Store with `aws ssm put-parameter` → copy the same value into Kubernetes with `kubectl create secret ... | kubectl apply ...` → expose it as the Pod's `JWT_SECRET` environment variable at startup. When copying a value already stored in Parameter Store, retrieve it privately using `aws ssm get-parameter --with-decryption` first. CodeBuild's environment and the application's Pod environment are separate; both must receive the intended value.
+
+The local **`.env` remains a separate local file**. The generation command below creates a new secret for AWS and does not read or update `.env`. To reuse your local secret, load `.env` into the terminal environment first and skip generation. These resources store the signing secret, not the JWT access tokens issued to clients. Preserve existing project secrets unless deliberately rotating them; keep values out of Git and shared output.
 
 Create the secret before starting the pipeline so initial builds can retrieve it. Run from the project submodule with its uv environment ready:
 
@@ -607,16 +618,139 @@ Existing container name conflict (2026-11-11, user and assistant): user repeated
 
 Pipeline overview simplification (2026-11-11, assistant): at the user's request, inspected Part 2 A and its table-of-contents entries with `rg`, then rewrote the overview as eight concise bullets without subsections. Preserved its runtime/dependency context, regional constraint, IAM policy files and trust relationship, Kubernetes RBAC mapping, GitHub token parameters, CloudFormation/buildspec links, separate secret delivery, deployment flow, and pytest publication/deployment gate. Explicitly identified Parts 2 B–D as the successive implementation sections and removed the three obsolete subsection links from the table of contents. Applied with `apply_patch`; verified using a scoped section check and `git diff --check`. Documentation only; no implementation or AWS commands were run.
 
+Recurring AWS launcher conflict (2026-11-11, user and assistant): user attempted `aws sso login --profile "$env:AWS_PROFILE"` and then `aws sso login --profile "deployment-course"`; both failed importing `awscli` from the old Poetry launcher's `Scripts/aws.cmd`. Assistant ran `Get-Command aws -All` and `& 'C:/Program Files/Amazon/AWSCLIV2/aws.exe' --version`: standalone AWS CLI 2.27.22 works, while Python environment launchers precede it on PATH. Added the session PATH correction and version check directly to the course's Part 2 B PowerShell setup, plus the absolute executable fallback and explanation that profile changes do not fix command selection. Applied using `apply_patch` and checked with `git diff --check`. No SSO login, profile edit, permanent PATH change, or AWS resource operation was performed; user login retry remains pending.
+
+CloudFormation role-field clarification (2026-11-11, assistant): user asked whether to add the Udacity deployment role during stack creation. Inspected course step 2.3 and the fork template's `KubectlRoleName` parameter, custom resource, and CodeBuild role ARN configuration using `rg`. Consulted [AWS CloudFormation service-role documentation](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-iam-servicerole.html). Clarified course steps 2–3: supply `UdacityFlaskDeployCBKubectlRole` as the template parameter's role name; it must already exist. The optional stack Permissions/IAM role field is a different CloudFormation service role and should remain empty for this exercise unless account policy requires a separately configured service role. Used `apply_patch` and `git diff --check`; no AWS role or stack changes were made.
+
+Stack submission reported (2026-11-11, user and assistant): user confirmed the CloudFormation stack was already submitted before revisiting the parameter instructions. Exact submitted name, current status, parameter values, and whether the optional execution-role selection was removed have not yet been confirmed. Assistant inspected step 2.3 and template defaults with `rg` and consulted AWS stack-status/service-role recovery documentation. `KubectlRoleName` defaults to `UdacityFlaskDeployCBKubectlRole`, so not editing that parameter does not by itself establish an error. Added guidance to inspect the existing stack's status, non-secret parameters, Stack info role, and first failure event before deciding recovery. Used `apply_patch` and `git diff --check`; no cloud stack was inspected through the account, updated, deleted, or recreated by the assistant.
+
+Submitted stack role inspection instructions (2026-11-11, assistant): user asked how to check the optional execution-role selection. Consulted official AWS stack-information documentation, inspected the existing guidance with `rg`, and added the console path **Stack info → Overview → IAM role**, interpretation of unset versus the Udacity role ARN, and a read-only `describe-stacks` query limited to status and `RoleARN`. Provided Bash and PowerShell alternatives; the PowerShell version uses the standalone AWS CLI path and backtick continuations. Applied with `apply_patch` and checked formatting with `git diff --check`. Commands are instructions only; user results remain pending, and no AWS account query or change was performed by the assistant.
+
+Submitted deployment-role parameter confirmed (2026-11-11, user-reported): the AWS console's Parameters tab shows `KubectlRoleName = UdacityFlaskDeployCBKubectlRole`, matching the template's expected deployment role. This confirms that parameter only; the separate CloudFormation execution role under **Stack info → Overview → IAM role** and the stack's current status are still unconfirmed. Assistant recorded the result using `apply_patch` and checked formatting with `git diff --check`; no AWS changes were made.
+
+Kubernetes signing-secret reference rechecked (2026-11-11, assistant): user asked to add the `JWT_SECRET` environment block in `simple_jwt_api.yml`. Read the manifest with `Get-Content` and verified the existing `simple-jwt-api` container already has exactly the requested `secretKeyRef` (`name: jwt-secret`, `key: JWT_SECRET`) alongside its image, readiness probe, security context, and ports. `git status --short` in the submodule was clean, and `git log -1 --oneline` showed implementation commit `ba5983b`, previously pushed. No duplicate or code change was needed. Updated the course instruction with `apply_patch` to make the existing implementation explicit, then ran `git diff --check`. Creating/verifying the actual cluster Secret remains a separate user step; no Kubernetes or AWS command was executed.
+
+Signing-secret storage explanation (2026-11-11, assistant): at the user's request, inspected the secret-delivery sections with `rg` and added the explanation to both the course README (Part 2 C step 3) and this project README (execution-guide step 6). Documented Parameter Store versus Kubernetes Secret names/purposes, terminal-to-AWS/cluster flow, CodeBuild versus Pod environments, the separate local `.env`, newly generated versus reused values, and signing secrets versus client access tokens. Updated using `apply_patch` and verified with `git diff --check` and scoped text searches. Documentation only; no secret values were read or changed and no AWS/Kubernetes commands were executed.
+
+Initial pipeline Parameter Store failure investigated (2026-11-11, user and assistant): user supplied CodeBuild logs showing `DOWNLOAD_SOURCE` failed at 15:28 UTC (16:28 Europe/Budapest), with `Decrypted Variables: parameter does not exist: JWT_SECRET`. No buildspec phase commands ran in that execution. Assistant inspected the buildspec's `JWT_SECRET: JWT_SECRET` mapping and the existing guide, then consulted official CodeBuild troubleshooting/buildspec documentation through web and Context7. Used the standalone AWS CLI v2 for read-only checks under profile `deployment-course`; no secret values were printed or decrypted.
+
+Read-only command record (all AWS calls used `C:\Program Files\Amazon\AWSCLIV2\aws.exe`; executed in PowerShell):
+
+```powershell
+aws configure get region --profile deployment-course
+aws sts get-caller-identity --profile deployment-course --query '{Account:Account}' --output json
+aws ssm get-parameter --name JWT_SECRET --profile deployment-course --region eu-central-1 --query 'Parameter.{Name:Name,Type:Type,Version:Version}' --output json
+aws ssm get-parameter --name JWT_SECRET --profile deployment-course --region eu-central-1 --query 'Parameter.{Name:Name,Type:Type,Version:Version,LastModifiedDate:LastModifiedDate}' --output json
+aws codebuild batch-get-projects --names simple-jwt-api-pipeline --profile deployment-course --region eu-central-1 --query '{Projects:projects[].{Name:name,Arn:arn,ServiceRole:serviceRole},NotFound:projectsNotFound}' --output json
+$buildIds = aws codebuild list-builds-for-project --project-name simple-jwt-api-pipeline --sort-order DESCENDING --profile deployment-course --region eu-central-1 --query 'ids[:3]' --output json | ConvertFrom-Json
+aws codebuild batch-get-builds --ids $buildIds --profile deployment-course --region eu-central-1 --query 'builds[].{Id:id,Status:buildStatus,Started:startTime,Phase:currentPhase}' --output json
+```
+
+Findings: `JWT_SECRET` now exists as `SecureString`, version 1, in `eu-central-1`, account `077073585279`. Its last-modified/initial creation timestamp is **16:35:30.815 Budapest time**, after the failed run. The CodeBuild project `simple-jwt-api-pipeline` is in that same account/region. Its only returned build was `simple-jwt-api-pipeline:679d237f-5c32-4e3f-ada5-e5620d9db148`, started 16:27:51.755, status FAILED; no newer retry was found. This supports a missing parameter at initial build time, now resolved by the later parameter creation. Do not overwrite it merely to fix the historical failure. Next user action: complete the secret-delivery steps if still outstanding, then choose **CodePipeline → pipeline → Release change** and inspect the new execution. The assistant did not create/rotate a parameter, change IAM, or retry/deploy the pipeline. Added the failure explanation to the course README and this log using `apply_patch`; verified with `git diff --check`.
+
+Build-trigger explanation added (2026-11-11, assistant): at the user's request, read the course's “4. Understand and configure buildspec.yml” section with `rg`, then added the initial CloudFormation → CodePipeline → CodeBuild sequence, subsequent GitHub push triggers, manual **Release change** executions, pipeline artifact dependency, and the fact that Parameter Store changes do not trigger or resume builds. Also explained `DOWNLOAD_SOURCE` secret resolution before buildspec commands and why the initial run can precede parameter creation. Applied with `apply_patch` and checked using `git diff --check`. Documentation only; no pipeline execution or AWS change was initiated.
+
+CodePipeline reference added (2026-11-11, assistant): user requested an explicit CodePipeline reference in the buildspec section. Read the current section with `Get-Content`/`rg`, then linked its explanation to the earlier CloudFormation pipeline-creation section and the regional CodePipeline console. Clarified the template's Source → Build stages and that CodeBuild runs the buildspec's publication/deployment commands. Applied using `apply_patch` and checked with `git diff --check`. Documentation only; no pipeline was started or changed.
+
+### Part 2 D live test-gate demonstration — 2026-11-11
+
+User requested implementing all of Part 2 D, including its temporary failing-test commit/push and corrected commit/push. The existing fork already runs pytest after dependency synchronization and guards `post_build` before publication/deployment. Baseline: clean `master` at `67a0fea95f572af1783bfc2343cac83c8ccd7826`, matching fetched `origin/master`; 11 local tests passed. Latest build `simple-jwt-api-pipeline:032089cb-814e-497d-ba92-521a1930fe5a` succeeded for that commit, and the deployment has three ready replicas.
+
+Execution checklist:
+
+- [x] Inspect Part 2 D, existing test gate/tests, clean fork branch, remote, and live successful baseline. Initial uv cache access was sandbox-blocked; approved retry passed all 11 cases.
+- [x] Save sanitized baseline image, replica, endpoint, and ECR evidence in [baseline.json](./evidence/part2d/baseline.json): healthy endpoint, three ready replicas, deployment revision 2, and two ECR images.
+- [x] Add the prescribed temporary assertion inside `test_health`, verify local failure, commit/push to the monitored fork branch, and wait for the triggered pipeline.
+- [x] Verify the pipeline fails on pytest, publishes no new image, and leaves the baseline deployment healthy and unchanged. Saved [failed-run.json](./evidence/part2d/failed-run.json).
+- [x] Remove the assertion, rerun all tests, commit/push the correction, and verify a new successful pipeline/rollout and live API checks. Saved [restored-run.json](./evidence/part2d/restored-run.json).
+- [x] Save execution IDs, commits, results, and commands here; finish with passing tests and a clean fork checkout. Preserved unrelated parent/lab changes.
+
+Progress: inserted the prescribed assertion in `test_health`; local pytest returned exactly one intentional failure and 10 passes. Created commit `d01c8400093f7a11ba43112d6b20ee62eca91dc5`. The first `git push` waited in Git Credential Manager and was canceled; a GitHub connector write attempt returned HTTP 403 and made no change. Git's existing configuration has both `manager` and `store` helpers. Inspected them with `git config --show-origin --get-all credential.helper` and read `git credential-manager github login --help`. Retried successfully using the already-configured store without interactive prompts: `git -c credential.helper= -c credential.helper=store -c credential.interactive=never push origin master` (with `GIT_TERMINAL_PROMPT=0` for that process). No credential values were read or printed and no persistent Git configuration was changed. GitHub change detection then automatically started pipeline execution `8dfc1287-f54e-4bce-af0d-63ebe861a0fd`, with build `simple-jwt-api-pipeline:f7ce2d8b-cd12-44a3-918b-49214350f96f` for the expected failure commit. Results are recorded below.
+
+Failure result: pipeline and build failed as intended. CloudWatch logs show `AssertionError: Intentional check: this commit must not deploy` and `1 failed, 10 passed`; `PRE_BUILD` failed and later build/publication/deployment phases did not run. Compared ECR digest/tag sets, Deployment image and revision, Pod UIDs, ready replica count, and endpoint with the baseline: all unchanged, three ready replicas, `Healthy`. A later read needed to refresh the AWS SSO cache; the sandbox denied that cache write, and an approved retry succeeded. No secret values were queried or displayed. Restored the original test file, reran the full suite (11 passed), then committed/pushed `7c9bf6e79b512fe32ccd2cf5e187e2d6f92b9f34` to `master`. The final source tree matches the pre-demonstration tree; the two commits retain evidence of the failing/passing sequence.
+
+**Corrected execution succeeded.** CodePipeline automatically started `b3de9dbe-67cb-4e3f-89bd-4580d985e652`; CodeBuild `simple-jwt-api-pipeline:98bb9388-2e29-4b3c-a0f9-7ed56e4f0e65` ran from 17:25:52 to 17:26:53 Budapest time. Logs show **11 passed**, a successful build-status check, Docker push, manifest apply, and successful rollout. Verified the deployed ECR tag ends in `7c9bf6e7`, all three replicas are updated/ready, and health/auth/contents work at the external URL. Missing and invalid tokens both return 401. The failed run did not enter `post_build`; the successful run executed its guard before publication. No temporary failing assertion remains.
+
+| Evidence | Intentional failure | Restored passing suite |
+| --- | --- | --- |
+| Fork commit | [`d01c840`](https://github.com/mxagar/udacity_server_deployment_exercises_cd0157/commit/d01c8400093f7a11ba43112d6b20ee62eca91dc5) | [`7c9bf6e`](https://github.com/mxagar/udacity_server_deployment_exercises_cd0157/commit/7c9bf6e79b512fe32ccd2cf5e187e2d6f92b9f34) |
+| Pipeline execution | `8dfc1287-f54e-4bce-af0d-63ebe861a0fd` — Failed | `b3de9dbe-67cb-4e3f-89bd-4580d985e652` — Succeeded |
+| CodeBuild run suffix | `f7ce2d8b-cd12-44a3-918b-49214350f96f` | `98bb9388-2e29-4b3c-a0f9-7ed56e4f0e65` |
+| pytest | 1 intentional failure, 10 passed | 11 passed locally and in CodeBuild |
+| Publication/deployment | No push/apply; ECR, revision, image and Pods unchanged | New tag published, rollout completed, 3 ready replicas |
+| Saved results | [failed-run.json](./evidence/part2d/failed-run.json) | [restored-run.json](./evidence/part2d/restored-run.json) |
+
+Local execution commands (run from the fork's submodule; the assertion was edited with `apply_patch` and later removed):
+
+```powershell
+git status --short
+git branch -avv
+git fetch origin master
+git rev-parse HEAD
+git rev-parse origin/master
+git check-ignore .env
+uv run --locked python -m pytest test_main.py
+# After inserting the prescribed temporary assertion: expected 1 failed, 10 passed.
+uv run --locked python -m pytest test_main.py
+git diff --check
+git diff --name-only
+git add -- test_main.py
+git commit -m 'test: demonstrate failing tests block EKS deployment'
+$env:GIT_TERMINAL_PROMPT = '0'
+git -c credential.helper= -c credential.helper=store -c credential.interactive=never push origin master
+# After verifying the cloud failure and removing the assertion:
+uv run --locked pytest
+git diff --check
+git add -- test_main.py
+git commit -m 'test: restore passing suite after deployment-gate proof'
+git -c credential.helper= -c credential.helper=store -c credential.interactive=never push origin master
+git diff --exit-code 67a0fea95f572af1783bfc2343cac83c8ccd7826 HEAD
+git status --short
+```
+
+Cloud verification command record: AWS calls used the standalone CLI and explicit `deployment-course`/`eu-central-1`; repeated read-only status calls waited for the expected commit and terminal results. Queried only selected pipeline/build metadata, not environment secret values. Commands below show the verification calls; the CloudWatch group/stream variables were populated from each build's metadata:
+
+```powershell
+$awsExe = 'C:\Program Files\Amazon\AWSCLIV2\aws.exe'
+$pipelineName = 'simple-jwt-api-pipeline-CodePipelineGitHub-upDPTJrhUW5M'
+$projectName = 'simple-jwt-api-pipeline'
+$repository = 'simple-jwt-api-pipeline-ecrdockerrepository-esyamizthgc4'
+$failedBuildId = 'simple-jwt-api-pipeline:f7ce2d8b-cd12-44a3-918b-49214350f96f'
+$restoredBuildId = 'simple-jwt-api-pipeline:98bb9388-2e29-4b3c-a0f9-7ed56e4f0e65'
+& $awsExe codepipeline list-pipelines --profile deployment-course --region eu-central-1 --query 'pipelines[].{Name:name,Type:pipelineType}' --output json
+& $awsExe codepipeline get-pipeline --name $pipelineName --profile deployment-course --region eu-central-1 --query 'pipeline.{ExecutionMode:executionMode,Source:stages[0].actions[0].configuration.{Repository:Repo,Owner:Owner,Branch:Branch,Polling:PollForSourceChanges}}' --output json
+& $awsExe codepipeline list-pipeline-executions --pipeline-name $pipelineName --max-results 3 --profile deployment-course --region eu-central-1 --query 'pipelineExecutionSummaries[].{Id:pipelineExecutionId,Status:status,Started:startTime,Commit:sourceRevisions[0].revisionId}' --output json
+& $awsExe codebuild list-builds-for-project --project-name $projectName --sort-order DESCENDING --profile deployment-course --region eu-central-1 --query 'ids[:4]' --output json
+foreach ($buildId in @($failedBuildId, $restoredBuildId)) {
+    $build = & $awsExe codebuild batch-get-builds --ids $buildId --profile deployment-course --region eu-central-1 --query 'builds[0].{Id:id,Status:buildStatus,Commit:resolvedSourceVersion,Started:startTime,Ended:endTime,Phases:phases[].{Name:phaseType,Status:phaseStatus,Contexts:contexts},LogGroup:logs.groupName,LogStream:logs.streamName}' --output json | ConvertFrom-Json
+    $messages = & $awsExe logs get-log-events --log-group-name $build.LogGroup --log-stream-name $build.LogStream --start-from-head --profile deployment-course --region eu-central-1 --query 'events[].message' --output json | ConvertFrom-Json
+    # Only relevant test, phase, push/apply, guard, and rollout messages were saved.
+}
+foreach ($executionId in @('8dfc1287-f54e-4bce-af0d-63ebe861a0fd', 'b3de9dbe-67cb-4e3f-89bd-4580d985e652')) {
+    & $awsExe codepipeline get-pipeline-execution --pipeline-name $pipelineName --pipeline-execution-id $executionId --profile deployment-course --region eu-central-1 --query 'pipelineExecution.{Id:pipelineExecutionId,Status:status}' --output json
+}
+& $awsExe ecr describe-images --repository-name $repository --profile deployment-course --region eu-central-1 --query 'imageDetails[].{Digest:imageDigest,Tags:imageTags,Pushed:imagePushedAt}' --output json
+kubectl config current-context
+kubectl get deployment simple-jwt-api --namespace default -o json
+kubectl get service simple-jwt-api --namespace default -o json
+kubectl get pods --namespace default -l app=simple-jwt-api -o json
+kubectl rollout status deployment/simple-jwt-api --namespace default --timeout=180s
+```
+
+Saved snapshots used `ConvertTo-Json` / `Set-Content -Encoding utf8` in `evidence/part2d/`; `Compare-Object` checked ECR digest/tag signatures and Pod UIDs, with direct comparisons for the deployment image, revision, and ready replicas. Live verification used `Invoke-RestMethod` for health, JSON `/auth`, and bearer `/contents`, and `Invoke-WebRequest -SkipHttpErrorCheck` for missing/invalid-token 401 checks. Test tokens were held in memory and removed, never printed or saved. Checked evidence JSON and documentation formatting with `git diff --check` and verified the final fork checkout is clean and matches `origin/master`. Final `git -c credential.helper= -c credential.helper=store -c credential.interactive=never ls-remote origin refs/heads/master` confirmed GitHub's master is `7c9bf6e79b512fe32ccd2cf5e187e2d6f92b9f34`; a scan found no bearer JWT strings in the three evidence JSON files. Parent README/evidence changes and the updated submodule pointer remain local for review; unrelated lab-submodule changes were preserved.
+
+Submission guidance added (2026-11-11, assistant): user requested a Submission section immediately before Cleaning Up. Inspected the course rubric, fork README/runtime/Dockerfile, saved baseline/restored evidence, and current repository status using `rg`, `Get-Content`, and `git status --short`. Added source/evidence handoff instructions, a criterion-to-evidence table, an explicit `python:stretch` versus `python:3.13-slim` rubric exception note, other modernization/naming changes, copyable reviewer notes with the verified commit/URL/execution IDs, and a final submission/review/cleanup checklist. Distinguished the parent guide's evidence files from the standalone fork and avoided claiming a specific portal upload format or screenshot count. Updated the table of contents. Applied using `apply_patch` and checked formatting/section order and referenced evidence paths. Documentation only; no files were packaged, commits/pushes performed, or submission sent.
+
 For future entries, use: date/time (Europe/Budapest), actor, exact sanitized command or console action, result, verification/evidence, and next action. Include unsuccessful attempts and their resolution.
 
 ## Reviewer evidence
 
-- External application URL: pending.
-- Source repository: `https://github.com/mxagar/udacity_server_deployment_exercises_cd0157`, branch `master`; initial implementation published at `ba5983b8d7e1b61247c2d851cd94578d21d45778`. Final deployment/test-gate correction commit remains pending.
+- External application URL: [Flask API](http://a801c89a3b3334c9aa490f41d56834f7-6753305.eu-central-1.elb.amazonaws.com).
+- Source repository: `https://github.com/mxagar/udacity_server_deployment_exercises_cd0157`, branch `master`; final test-gate correction commit `7c9bf6e79b512fe32ccd2cf5e187e2d6f92b9f34`, pushed and successfully deployed.
 - Passing local tests and Docker endpoint checks: 2026-11-09, 11 pytest cases passed; Docker image built; health/auth/contents and missing/invalid token HTTP checks passed. See implementation session log.
-- Successful pipeline/build execution: pending.
-- Failed-test execution and proof publication/deployment were blocked: pending.
-- Corrected successful execution and live endpoint checks: pending.
+- Successful pipeline/build execution: `b3de9dbe-67cb-4e3f-89bd-4580d985e652` / `simple-jwt-api-pipeline:98bb9388-2e29-4b3c-a0f9-7ed56e4f0e65`.
+- Failed-test execution and proof publication/deployment were blocked: `8dfc1287-f54e-4bce-af0d-63ebe861a0fd`; unchanged ECR/deployment/Pods confirmed in [failed-run.json](./evidence/part2d/failed-run.json).
+- Corrected successful execution and live endpoint checks: 11 tests passed, rollout succeeded, 3 updated/ready replicas, API and 401 checks passed; see [restored-run.json](./evidence/part2d/restored-run.json).
 - Review completed / cleanup verified: pending.
 
 ## References

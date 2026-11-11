@@ -224,6 +224,12 @@ Table of Contents:
     - [Part 2 D: Adding Tests to the Build](#part-2-d-adding-tests-to-the-build)
       - [1. Add the test command](#1-add-the-test-command)
       - [2. Prove that a failing test blocks deployment](#2-prove-that-a-failing-test-blocks-deployment)
+    - [Submission](#submission)
+      - [1. Prepare the handoff](#1-prepare-the-handoff)
+      - [2. Include evidence for the rubric](#2-include-evidence-for-the-rubric)
+      - [3. Explain differences from the original course](#3-explain-differences-from-the-original-course)
+      - [4. Add reviewer notes](#4-add-reviewer-notes)
+      - [5. Submit and keep the app available](#5-submit-and-keep-the-app-available)
     - [Cleaning Up](#cleaning-up)
       - [1. Select the project and record retained resource names](#1-select-the-project-and-record-retained-resource-names)
       - [2. Required: remove the pipeline stack](#2-required-remove-the-pipeline-stack)
@@ -4960,17 +4966,21 @@ eksctl version
 kubectl version --client
 
 # PowerShell
+# Prefer standalone AWS CLI v2 over aws launchers in Python/Poetry environments.
+$env:PATH = 'C:\Program Files\Amazon\AWSCLIV2;' + $env:PATH
 $env:AWS_PROFILE = "deployment-course"
 $env:AWS_DEFAULT_REGION = "eu-central-1"
 $env:CLUSTER_NAME = "simple-jwt-api"
 $env:KUBERNETES_VERSION = "1.37"
 
+aws --version  # Must report aws-cli/2 before attempting login.
 aws sso login --profile "$env:AWS_PROFILE"
 aws sts get-caller-identity
-aws --version
 eksctl version
 kubectl version --client
 ```
+
+If `aws` raises `ModuleNotFoundError: No module named 'awscli'` from a Python/Poetry `Scripts\aws.cmd`, the wrong launcher is first on PATH. The PowerShell PATH assignment above applies only to that terminal; repeat it in new terminals or after a Python environment changes command precedence. You can bypass PATH entirely with `& 'C:\Program Files\Amazon\AWSCLIV2\aws.exe' sso login --profile deployment-course`. A different `--profile` value cannot fix a launcher import failure.
 
 This uses the AWS IAM Identity Center single sign-on (SSO) profile configured earlier. For a different authentication method, sign in through that profile's normal workflow. Creating and administering the cluster must use an identity with the required access; an SSO login alone does not grant Kubernetes permissions on an existing cluster.
 
@@ -4980,7 +4990,7 @@ The project now targets **Kubernetes 1.37** and **kubectl 1.37.2**, which is als
 
 Create an Amazon Elastic Kubernetes Service (EKS) cluster named `simple-jwt-api` with two `t3.medium` worker nodes:
 
-```text
+```bash
 # Bash
 eksctl create cluster \
   --name "$CLUSTER_NAME" \
@@ -4991,24 +5001,35 @@ eksctl create cluster \
   --profile "$AWS_PROFILE"
 
 # PowerShell
-eksctl create cluster  --name "$env:CLUSTER_NAME"  --nodes 2  --version "$env:KUBERNETES_VERSION"  --instance-types t3.medium  --region "$env:AWS_DEFAULT_REGION"  --profile "$env:AWS_PROFILE"
+eksctl create cluster  `
+  --name "$env:CLUSTER_NAME"  `
+  --nodes 2  `
+  --version "$env:KUBERNETES_VERSION"  `
+  --instance-types t3.medium  `
+  --region "$env:AWS_DEFAULT_REGION"  `
+  --profile "$env:AWS_PROFILE"
 ```
 
 This replaces the course's obsolete Kubernetes 1.22 example. Version 1.37 is currently supported in `eu-central-1`; if you choose another region, verify version and instance availability there. Cluster creation takes several minutes and provisions the control plane and a managed node group containing two nodes.
 
 Monitor the **EKS dashboard** in the selected region and the **CloudFormation console** for the cluster and node-group stacks. Refresh kubeconfig with the same profile, then verify that both nodes are `Ready`:
 
-```text
+```bash
 # Bash
 aws eks update-kubeconfig \
   --name "$CLUSTER_NAME" \
   --region "$AWS_DEFAULT_REGION" \
   --profile "$AWS_PROFILE"
+
 kubectl config current-context
 kubectl get nodes
 
 # PowerShell
-aws eks update-kubeconfig  --name "$env:CLUSTER_NAME"  --region "$env:AWS_DEFAULT_REGION"  --profile "$env:AWS_PROFILE"
+aws eks update-kubeconfig  `
+  --name "$env:CLUSTER_NAME"  `
+  --region "$env:AWS_DEFAULT_REGION"  `
+  --profile "$env:AWS_PROFILE"
+
 kubectl config current-context
 kubectl get nodes
 ```
@@ -5017,14 +5038,17 @@ If Kubernetes reports `Unauthorized`, confirm the profile saved in kubeconfig an
 
 The manual `aws-auth` mapping used below requires authentication mode `CONFIG_MAP` or `API_AND_CONFIG_MAP`. Current `eksctl` defaults to the latter; verify it after creation:
 
-```text
+```bash
 # Bash
 aws eks describe-cluster --name "$CLUSTER_NAME" \
   --query 'cluster.{version:version,authenticationMode:accessConfig.authenticationMode}' \
   --output table
 
 # PowerShell
-aws eks describe-cluster --name "$env:CLUSTER_NAME"  --query 'cluster.{version:version,authenticationMode:accessConfig.authenticationMode}'  --output table
+aws eks describe-cluster `
+  --name "$env:CLUSTER_NAME"  `
+  --query 'cluster.{version:version,authenticationMode:accessConfig.authenticationMode}'  `
+  --output table
 ```
 
 An `API`-only cluster does not use `aws-auth`. For this exercise, create or reuse a cluster that supports the ConfigMap method rather than applying an ineffective mapping.
@@ -5033,7 +5057,7 @@ An `API`-only cluster does not use `aws-auth`. For this exercise, create or reus
 
 The cluster, worker nodes, and supporting networking incur charges while retained. Keep them for the project and review, then remove any exercise LoadBalancer Services or Ingresses before deleting the cluster:
 
-```text
+```bash
 # Bash
 # Run after receiving feedback and removing the exercise load balancers.
 eksctl delete cluster \
@@ -5044,18 +5068,22 @@ eksctl delete cluster \
 
 # PowerShell
 # Run after receiving feedback and removing the exercise load balancers.
-eksctl delete cluster  --name "$env:CLUSTER_NAME"  --region "$env:AWS_DEFAULT_REGION"  --profile "$env:AWS_PROFILE"  --wait
+eksctl delete cluster  `
+  --name "$env:CLUSTER_NAME"  `
+  --region "$env:AWS_DEFAULT_REGION"  `
+  --profile "$env:AWS_PROFILE"  `
+  --wait
 ```
 
 The [earlier cleanup procedure](#final-pipeline-clean-up) explains the deletion order. The remaining steps below prepare access while the cluster is running.
 
 #### 2. Create or reuse the IAM role for CodeBuild
 
-CodeBuild will assume `UdacityFlaskDeployCBKubectlRole` to access EKS. The **trust policy** determines who can assume it; the **permissions policy** determines its allowed AWS actions. If you retained this exercise role from the previous lesson, verify its policies and reuse it instead of creating a duplicate.
+CodeBuild will assume `UdacityFlaskDeployCBKubectlRole` to access EKS. The **trust policy** determines who can assume it; the **permissions policy** determines its allowed AWS actions. If you retained this exercise role from the previous lesson, verify its policies and reuse it instead of creating a duplicate. If not, the creation command is below.
 
 ##### Get the account ID and prepare the trust policy
 
-```text
+```bash
 # Bash
 aws sts get-caller-identity --query Account --output text
 
@@ -5086,7 +5114,7 @@ The account principal identifies the AWS account; it does not require signing in
 
 If the role is absent, create it from the project directory:
 
-```text
+```bash
 # Bash
 aws iam create-role \
   --role-name UdacityFlaskDeployCBKubectlRole \
@@ -5094,7 +5122,10 @@ aws iam create-role \
   --output text --query 'Role.Arn'
 
 # PowerShell
-aws iam create-role  --role-name UdacityFlaskDeployCBKubectlRole  --assume-role-policy-document file://trust.json  --output text --query 'Role.Arn'
+aws iam create-role  `
+  --role-name UdacityFlaskDeployCBKubectlRole  `
+  --assume-role-policy-document file://trust.json  `
+  --output text --query 'Role.Arn'
 ```
 
 Save the returned Amazon Resource Name (ARN), which has this form:
@@ -5123,7 +5154,7 @@ The provided [`iam-role-policy.json`](./project/udacity_server_deployment_exerci
 
 Attach it as the inline policy `eks-describe`:
 
-```text
+```bash
 # Bash
 aws iam put-role-policy \
   --role-name UdacityFlaskDeployCBKubectlRole \
@@ -5131,7 +5162,10 @@ aws iam put-role-policy \
   --policy-document file://iam-role-policy.json
 
 # PowerShell
-aws iam put-role-policy  --role-name UdacityFlaskDeployCBKubectlRole  --policy-name eks-describe  --policy-document file://iam-role-policy.json
+aws iam put-role-policy  `
+  --role-name UdacityFlaskDeployCBKubectlRole  `
+  --policy-name eks-describe  `
+  --policy-document file://iam-role-policy.json
 ```
 
 In **IAM -> Roles -> UdacityFlaskDeployCBKubectlRole**, verify its trust relationship and permissions. If `create-role` returns `EntityAlreadyExists`, inspect and reuse the existing exercise role; do not delete it just to rerun the command.
@@ -5144,7 +5178,7 @@ Repeat this mapping for **each newly created cluster**, even when reusing the IA
 
 Use a temporary file so you edit the current cluster configuration rather than the repository's illustrative sample:
 
-```text
+```bash
 # Bash
 AUTH_PATCH=/tmp/aws-auth-patch.yml
 kubectl get configmap/aws-auth --namespace kube-system -o yaml > "$AUTH_PATCH"
@@ -5158,7 +5192,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Could not fetch aws-auth; inspect the error be
 
 If this returns `NotFound` on a new `API_AND_CONFIG_MAP` cluster whose managed nodes are already `Ready`, its node access may be supplied by EKS access entries. Create the missing ConfigMap, then repeat the fetch:
 
-```text
+```bash
 # Bash
 # Only if aws-auth is absent; never replace an existing ConfigMap with an empty one.
 kubectl create configmap aws-auth --namespace kube-system --from-literal=mapRoles='[]'
@@ -5176,7 +5210,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Could not fetch aws-auth' }
 
 Open the fetched file in an editor; with the Visual Studio Code command available:
 
-```text
+```bash
 # Bash
 code "$AUTH_PATCH"
 
@@ -5201,7 +5235,7 @@ Use the corrected [sample `aws-auth-patch.yml`](./project/udacity_server_deploym
 
 ##### Patch the ConfigMap and verify
 
-```text
+```bash
 # Bash
 kubectl patch configmap/aws-auth --namespace kube-system \
   --type merge --patch-file "$AUTH_PATCH"
@@ -5226,7 +5260,7 @@ Repeat **fetch -> edit -> patch** using the latest ConfigMap. Keep its fresh met
 
 Finally, confirm that the nodes remain healthy:
 
-```text
+```bash
 # Bash
 kubectl get nodes
 
@@ -5288,19 +5322,53 @@ The template provisions:
 In the **CloudFormation console**, select the same region as the EKS cluster, then:
 
 1. Choose **Create stack -> With new resources (standard)**. Under **Specify template**, select **Template is ready -> Upload a template file**, upload `ci-cd-codepipeline.cfn.yml`, and choose **Next**.
-2. Under **Specify stack details**, enter a stack name, such as `simple-jwt-api-pipeline`. Check the repository owner, name, branch, cluster, image, and role values, then paste the GitHub token into `GitHubToken`.
-3. Leave the stack options at their defaults unless your exercise requires otherwise. Review the settings, acknowledge the required IAM-resource capabilities, and submit.
+2. Under **Specify stack details**, enter a stack name, such as `simple-jwt-api-pipeline`. Check the repository owner, name, branch, cluster, and image. Set the **`KubectlRoleName` parameter** to `UdacityFlaskDeployCBKubectlRole` (the role name, not its ARN); this role must already exist from Part 2 B. Paste the GitHub token into `GitHubToken`.
+3. Under **Configure stack options**, leave the optional **Permissions / IAM role** field empty for this exercise unless your account requires a separately configured CloudFormation service role. Do not select `UdacityFlaskDeployCBKubectlRole` there: it is the role CodeBuild assumes to deploy to Kubernetes, not a CloudFormation execution role. Without a service role, CloudFormation uses your signed-in identity's permissions to provision resources. Review the settings, acknowledge the required IAM-resource capabilities, and submit.
 4. Monitor the stack's status and **Events**. Creation commonly takes 5–15 minutes; successful completion creates the resources reviewed above.
+
+If you already submitted before checking these fields, inspect the existing stack first: note its status, verify non-secret values on **Parameters** (`KubectlRoleName` may already have the correct template default), and inspect **Events** for the first resource failure and its reason. Check the stack's **Stack info** for any associated IAM role. Do not submit a duplicate stack or delete resources before diagnosing the current state; recovery depends on the status and whether the optional CloudFormation service role was selected. Keep the GitHub token private.
+
+To check the submitted execution role in the console, open **CloudFormation → Stacks → your stack → Stack info → Overview → IAM role**. An unset field means no CloudFormation service role was attached. An ARN ending in `/UdacityFlaskDeployCBKubectlRole` means the deployment role was selected for that separate purpose; inspect the status and Events before choosing a correction. The expected `KubectlRoleName` value is checked separately on **Parameters**.
+
+Alternatively, inspect only the status and execution role with this read-only command (replace the stack name if different):
+
+```bash
+# Bash
+aws cloudformation describe-stacks --stack-name simple-jwt-api-pipeline --profile deployment-course --region eu-central-1 --query 'Stacks[0].{Status:StackStatus,ExecutionRole:RoleARN}' --output table
+
+# PowerShell
+& 'C:\Program Files\Amazon\AWSCLIV2\aws.exe' cloudformation describe-stacks `
+  --stack-name simple-jwt-api-pipeline `
+  --profile deployment-course `
+  --region eu-central-1 `
+  --query 'Stacks[0].{Status:StackStatus,ExecutionRole:RoleARN}' `
+  --output table
+```
+
+`ExecutionRole` reported as `None`/null means no service-role ARN is set. This query omits all template parameters, including the token. See [AWS's stack-information reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/cfn-console-view-stack-data-resources.html).
 
 If CloudFormation reports `Template format error`, inspect the reported line and YAML indentation. The course suggests [YAML Validator](https://codebeautify.org/yaml-validator) or [YAML Lint](http://www.yamllint.com/) for checking the template.
 
 A new pipeline normally starts an execution automatically. If `JWT_SECRET` has not been created yet, its first build can fail during parameter retrieval; complete step 3 before retrying.
 
+If the build logs show **`DOWNLOAD_SOURCE` → `Decrypted Variables` → `parameter does not exist: JWT_SECRET`**, CodeBuild failed while loading the buildspec's Parameter Store mapping, before running install, tests, or Docker commands. Verify that the parameter is named exactly `JWT_SECRET` in the same account and region as the CodeBuild project. If you created it after that failed execution, keep the existing value and retry the complete workflow with **CodePipeline → your pipeline → Release change**. An old failed execution remains failed; creating the parameter does not resume it. If the parameter already existed before the build, check the build service role's `ssm:GetParameters` permissions and applicable KMS permissions. See [AWS CodeBuild troubleshooting](https://docs.aws.amazon.com/codebuild/latest/userguide/troubleshooting.html).
+
 #### 3. Store the signing secret and supply it to the application
 
-The `/auth` endpoint needs `JWT_SECRET` to sign tokens. Store its value as a `SecureString` in [AWS Systems Manager Parameter Store](https://docs.aws.amazon.com/systems-manager/latest/userguide/systems-manager-parameter-store.html):
+The `/auth` endpoint needs `JWT_SECRET` to sign tokens. This step stores the **same signing secret in two places**, each serving a different purpose:
 
-```text
+| Location | Resource name | Purpose |
+| --- | --- | --- |
+| AWS Systems Manager → Parameter Store | `JWT_SECRET`, type `SecureString` | Stores the value encrypted in the selected AWS account and region; CodeBuild retrieves it through the buildspec's `parameter-store` mapping. |
+| EKS cluster → Kubernetes Secret | `default/jwt-secret`, key `JWT_SECRET` | Supplies the value to the Flask Pods through the manifest's `secretKeyRef`. |
+
+You run the commands from your terminal: `aws ssm put-parameter` sends the value to Parameter Store; `aws ssm get-parameter --with-decryption` retrieves it; and `kubectl create secret ... | kubectl apply ...` copies it into the selected cluster. At startup, each Pod reads the Kubernetes Secret into its `JWT_SECRET` environment variable. Loading the value into CodeBuild alone does not supply it to Pods.
+
+Your local **`.env` is a separate file**. The generation command below creates a new random signing secret for AWS; it does not read or update `.env`. To reuse your existing local secret, load it from `.env` into the terminal environment and skip the generation command. Replacing an existing project's secret is a deliberate rotation: synchronize its Kubernetes copy and restart Pods; tokens signed with the old value will no longer verify after the switch.
+
+These resources hold the **signing secret**, not the JWT access tokens returned to clients. Keep its value out of Git and shared output. First, store it as a `SecureString` in [AWS Systems Manager Parameter Store](https://docs.aws.amazon.com/systems-manager/latest/userguide/systems-manager-parameter-store.html):
+
+```bash
 # Bash
 export JWT_SECRET="$(uv run --locked python -c 'import secrets; print(secrets.token_hex(32))')"
 aws ssm put-parameter \
@@ -5328,7 +5396,7 @@ Use `--overwrite` for this exercise's parameter when intentionally replacing its
 
 The buildspec's Parameter Store mapping configures the **CodeBuild environment**. Configure the application containers to receive the value too: copy the stored value into a Kubernetes Secret in the application's namespace, using your authorized cluster context.
 
-```text
+```bash
 # Bash
 JWT_SECRET=$(aws ssm get-parameter --name JWT_SECRET --with-decryption \
   --query 'Parameter.Value' --output text)
@@ -5353,7 +5421,7 @@ try {
 }
 ```
 
-In [`simple_jwt_api.yml`](./project/udacity_server_deployment_exercises_cd0157/simple_jwt_api.yml), add this `env` block inside the existing `spec.template.spec.containers` entry named `simple-jwt-api`, alongside its `image`, `securityContext`, and `ports` settings:
+In [`simple_jwt_api.yml`](./project/udacity_server_deployment_exercises_cd0157/simple_jwt_api.yml), ensure this `env` block is present inside the existing `spec.template.spec.containers` entry named `simple-jwt-api`, alongside its `image`, `securityContext`, and `ports` settings. **It is already implemented in the forked project`; do not add a duplicate.** If working from the original starter, add it as follows:
 
 ```yaml
 env:
@@ -5368,7 +5436,7 @@ Commit the manifest reference with your deployment changes; keep the secret valu
 
 After project submission and feedback, you may delete the Parameter Store entry if no other workload needs it:
 
-```text
+```bash
 # Bash
 # Optional cleanup after feedback.
 aws ssm delete-parameter --name JWT_SECRET
@@ -5382,11 +5450,22 @@ aws ssm delete-parameter --name JWT_SECRET
 
 CodeBuild reads [`buildspec.yml`](./project/udacity_server_deployment_exercises_cd0157/buildspec.yml) from the root of the source repository. A buildspec defines build commands and related settings; this project retains the course's `install`, `pre_build`, `build`, and `post_build` phase order.
 
+**CodePipeline coordinates the workflow.** The [pipeline created earlier with CloudFormation](#2-create-the-pipeline-resources-with-cloudformation) has a **Source** stage that retrieves the monitored GitHub revision and a **Build** stage that invokes CodeBuild with those source artifacts. CodeBuild then executes `buildspec.yml`, including the image publication and Kubernetes deployment commands in `post_build`. Open the [CodePipeline console in `eu-central-1`](https://console.aws.amazon.com/codesuite/codepipeline/start?region=eu-central-1) to select your pipeline, inspect its stages and source revision, follow the build execution, or choose **Release change**.
+
+**When does CodeBuild run?** The buildspec describes what a build does; CodePipeline starts the build and supplies its source artifacts:
+
+- **Initial stack creation:** CloudFormation creates the pipeline and supporting resources. The new pipeline starts its first execution, retrieves the GitHub source, and invokes CodeBuild: **CloudFormation → CodePipeline → CodeBuild → `buildspec.yml` commands**.
+- **Later code changes:** A push to the monitored GitHub branch triggers another pipeline execution and build.
+- **Manual execution or retry:** Choose **CodePipeline → your pipeline → Release change** to run the complete workflow again. Use the pipeline rather than starting CodeBuild alone, because this project uses `CODEPIPELINE` source and artifacts.
+- **Secret changes:** Creating or updating the Parameter Store `JWT_SECRET` does **not** trigger a new execution or resume a failed one. After fixing a missing parameter, start a new pipeline execution with **Release change**.
+
+**Secret retrieval happens before the build commands.** During `DOWNLOAD_SOURCE`, CodeBuild resolves the buildspec's `env.parameter-store` mapping. If `JWT_SECRET` is missing or inaccessible, the run can fail there before `install`, tests, Docker build, or deployment begins. This explains why the stack's initial pipeline execution can fail if it starts before you complete the secret-storage step. Create the parameter in the build project's account/region, finish supplying the Kubernetes Secret to the application, and then retry the pipeline.
+
 ##### 4.1. Check the client version and parameter mapping
 
 The project targets Kubernetes 1.37 and pins `KUBECTL_VERSION` to `v1.37.2`. Check the local client with:
 
-```text
+```bash
 # Bash
 kubectl version --client
 
@@ -5433,7 +5512,7 @@ Error: You must be logged in to the server (the server has asked for the client 
 
 Check the deployment-role ARN, its trust relationship and AWS permissions, and its Kubernetes mapping from Part 2 B. To refresh that mapping, fetch the current ConfigMap using an identity that already has cluster administrator access:
 
-```text
+```bash
 # Bash
 AUTH_PATCH=/tmp/aws-auth-patch.yml
 kubectl get configmap/aws-auth --namespace kube-system -o yaml > "$AUTH_PATCH"
@@ -5447,7 +5526,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Could not fetch aws-auth; inspect the error be
 
 Edit `data.mapRoles` as described in Part 2 B, preserving existing entries and inserting the correct account and deployment role. Then patch from the edited file:
 
-```text
+```bash
 # Bash
 kubectl patch configmap/aws-auth --namespace kube-system \
   --type merge --patch-file "$AUTH_PATCH"
@@ -5474,7 +5553,7 @@ Also review **CloudFormation -> your stack -> Parameters** to confirm that the r
 
 Verify that `origin` points to your own fork rather than Udacity's repository, then commit the intended project changes:
 
-```text
+```bash
 # Bash
 # Check the destination and current changes.
 git remote -v
@@ -5514,7 +5593,7 @@ The next section adds the automated test gate. The current buildspec installs py
 
 Confirm that the Deployment rolls out, then get the Service's external address:
 
-```text
+```bash
 # Bash
 kubectl rollout status deployment/simple-jwt-api --namespace default --timeout=180s
 kubectl get services simple-jwt-api --namespace default -o wide
@@ -5526,7 +5605,7 @@ kubectl get services simple-jwt-api --namespace default -o wide
 
 The `EXTERNAL-IP` field may contain a load-balancer hostname. Wait for provisioning and DNS resolution if it is initially pending or unavailable, then set the URL with an explicit `http://` scheme for the Service's port 80:
 
-```text
+```bash
 # Bash
 BASE_URL="http://YOUR_LOAD_BALANCER_HOSTNAME"
 curl --fail-with-body --silent --show-error "$BASE_URL/"
@@ -5559,11 +5638,21 @@ Invoke-RestMethod -Uri "$BASE_URL/contents" -Headers @{ Authorization = "Bearer 
 
 Expect `"Healthy"` from the health check, a token from `/auth`, and the email plus `exp` and `nbf` claims from `/contents`. These operations sign and verify tokens; they do not encrypt and decrypt their contents.
 
+```text
+{
+    "email":  "abc@xyz.com",
+    "exp":  xxx,
+    "nbf":  xxx
+}
+```
+
 **Save the external URL for the project reviewer** and keep the deployment available through the review period. Use the cleanup instructions after receiving feedback.
 
 ### Part 2 D: Adding Tests to the Build
 
 Require the unit tests to pass before publishing an image or updating the cluster. Reuse the Python 3.13 and uv environment from the earlier sections.
+
+**Completed and verified live on 2026-11-11.** The fork includes the pytest command and `post_build` success guard; do not add duplicates. Intentional-failure commit `d01c840` failed on pytest without changing ECR images or the running deployment. Corrected commit `7c9bf6e` passed all 11 tests and deployed successfully with three ready replicas and verified API responses. Both pushes automatically triggered CodePipeline. The instructions below describe that demonstration; execution IDs, commands, and evidence are recorded in the [project README](./project/README.md#part-2-d-live-test-gate-demonstration--2026-11-11).
 
 #### 1. Add the test command
 
@@ -5595,7 +5684,7 @@ post_build:
 
 Save the file, then confirm the tests pass locally from the project submodule:
 
-```text
+```bash
 # Bash
 uv run --locked python -m pytest test_main.py
 
@@ -5616,6 +5705,96 @@ assert False, "Intentional check: this commit must not deploy"
 4. Remove the temporary assertion, rerun the tests, and commit and push the fix. Confirm that the next execution succeeds and deploys normally.
 
 Finish with passing tests in the submitted repository. The intentional failure is a demonstration of the gate, not a permanent test.
+
+### Submission
+
+Submit the implementation, its live API address, and enough evidence for a reviewer to check every [rubric criterion](#project-rubric). The checklist below is based on this project's instructions; use the repository-link or upload format actually offered by your course's submission page.
+
+#### 1. Prepare the handoff
+
+- **Source code:** provide the [forked project repository](https://github.com/mxagar/udacity_server_deployment_exercises_cd0157), branch `master`, and the reviewed/deployed commit. The completed Part 2 D run deployed [`7c9bf6e79b512fe32ccd2cf5e187e2d6f92b9f34`](https://github.com/mxagar/udacity_server_deployment_exercises_cd0157/commit/7c9bf6e79b512fe32ccd2cf5e187e2d6f92b9f34). If you make later changes, record the new commit and its verification results.
+- **Implementation files:** include `main.py`, `test_main.py`, `Dockerfile`, `.dockerignore`, `pyproject.toml`, `uv.lock`, `.python-version`, `buildspec.yml`, `simple_jwt_api.yml`, `ci-cd-codepipeline.cfn.yml`, the IAM/access-policy examples, and the project README. The fork contains these at its root.
+- **Documentation and evidence:** include the [project README](./project/README.md), [baseline.json](./project/evidence/part2d/baseline.json), [failed-run.json](./project/evidence/part2d/failed-run.json), and [restored-run.json](./project/evidence/part2d/restored-run.json), plus any requested screenshots or terminal logs. These files live in the **parent guide**, outside the forked submodule: attach them separately or package copies with the submission. Local links and unpushed files will not be available to a remote reviewer.
+- **If submitting a ZIP:** package the actual fork source files and the evidence/documentation together. A ZIP of the parent guide alone does not automatically include its submodule contents. Exclude `.git`, `.venv`, caches, `.env`, GitHub tokens, signing secrets, and raw Kubernetes Secret exports. Retain lockfiles and `.dockerignore`.
+- **Access:** confirm the reviewer can open the repository and evidence links. If using private repositories, follow the course's reviewer-access process. Provide the API URL and test instructions; AWS credentials, console access, and the JWT signing secret are not part of the handoff.
+
+#### 2. Include evidence for the rubric
+
+Use readable terminal output, exported logs, or screenshots. Capture screenshots if the submission page specifically requests them; the rubric reproduced here does not prescribe a screenshot count. Record the relevant source commit and execution ID so the reviewer can connect the evidence to the code.
+
+| Criterion | Evidence to hand over |
+| --- | --- |
+| Dockerfile builds and runs Gunicorn | Successful local build output, container startup logs, and the Dockerfile showing the exact entry point `["gunicorn", "-b", ":8080", "main:APP"]`. |
+| Local container endpoints work | Results for health, token issuance, and protected contents through the published host port. Show status codes and sanitized claims; omit token values. Include missing/invalid-token 401 results as additional evidence. |
+| Runtime secret is configured | Document `.env` with `--env-file .env`, the buildspec's Parameter Store mapping, and the manifest's `secretKeyRef`. Show names/type/key references or metadata, never secret values or base64 Secret payloads. |
+| Pipeline parameters are correct | Template defaults or a sanitized Parameters view showing cluster `simple-jwt-api`, owner `mxagar`, repository `udacity_server_deployment_exercises_cd0157`, branch `master`, and role `UdacityFlaskDeployCBKubectlRole`. |
+| EKS API is available | External URL, successful rollout, three ready replicas, and endpoint results through the load balancer. The saved final snapshot records these checks. |
+| CodeBuild runs tests | Build log showing the pytest command and **11 passed**, tied to the final passing commit. |
+| Failed tests block delivery | The intentional-failure commit/run, its assertion failure, and before/after evidence that ECR tags/digests and the Deployment image/revision/Pods remained unchanged. Include the restored successful run so the final repository is passing. |
+
+The [project README's reviewer evidence](./project/README.md#reviewer-evidence) records the live URL and execution IDs. The three JSON snapshots include selected logs and deployment/image checks; the local Docker evidence is documented in its activity log. Add any missing local-output captures required by the submission form; do not present historical checks as newly rerun results.
+
+#### 3. Explain differences from the original course
+
+Be explicit about the historical rubric wording and the implemented replacement. An explanation does not itself waive a rubric requirement; flag the base-image difference for the reviewer and follow any course instruction requiring the original image.
+
+| Difference | Reviewer note and retained behavior |
+| --- | --- |
+| **Explicit rubric mismatch: `python:stretch` → `python:3.13-slim`** | The original rubric names `python:stretch`; this project intentionally uses the guide's updated Python 3.13 image. Dependencies install successfully, Gunicorn still loads `main:APP` on port 8080 with the exact required entry point, and local/cloud endpoint checks passed. Request review of this declared version substitution. |
+| Older Python/pip/`requirements.txt` workflow → Python 3.13 and uv | Dependencies are declared in `pyproject.toml` and fixed in `uv.lock`; Docker installs runtime dependencies with `uv sync --locked --no-dev`, while CodeBuild includes pytest and runs `uv run --locked python -m pytest test_main.py`. These commands preserve dependency installation and automated testing. |
+| Older JWT/library examples → current Flask/PyJWT APIs | Token encoding returns a string; the obsolete `.decode('utf-8')` is removed. HS256 signing/verification and the required endpoint contract remain intact. |
+| Historical AWS/Kubernetes tools and region → current project settings | EKS 1.37, kubectl 1.37.2, Python 3.13, CodeBuild `standard:8.0`, and AWS CLI v2 are used in `eu-central-1`. CLI v2 supplies EKS authentication and ECR login. These are compatibility/configuration updates to the same GitHub → CodePipeline → CodeBuild → ECR → EKS workflow. |
+| Local names and terminal examples | `.env`, image `simple-flask-project`, and container `simple-flask-container` replace illustrative names. Bash and PowerShell alternatives perform the same steps; these naming choices do not change the endpoint or deployment behavior. |
+
+Also describe the implementation additions: the Kubernetes Secret reference supplies the signing secret to Pods, the readiness probe checks HTTP health, the build-status guard prevents failed-build delivery, and rollout verification catches deployment failures. These support the required behavior. Additional API endpoints and custom failure alerts are optional suggestions and were not implemented. The app remains the course's token demonstration, without a user database.
+
+#### 4. Add reviewer notes
+
+Paste a note like the following into the submission comments or include it as `SUBMISSION.md` with the handoff. This is a template populated from the verified 2026-11-11 run; update it if the commit, deployment, or evidence changes:
+
+```markdown
+Project: Deploy Your Flask App to Kubernetes Using EKS
+Repository: https://github.com/mxagar/udacity_server_deployment_exercises_cd0157
+Branch: master
+Verified/deployed commit: 7c9bf6e79b512fe32ccd2cf5e187e2d6f92b9f34
+Region: eu-central-1
+API base URL: http://a801c89a3b3334c9aa490f41d56834f7-6753305.eu-central-1.elb.amazonaws.com
+
+Review steps:
+- GET / returns the JSON string "Healthy".
+- POST /auth with nonempty email/password JSON returns a token.
+- GET /contents with Authorization: Bearer <that token> returns email, exp, and nbf.
+- Missing/invalid tokens return 401. You can generate your own test token; no signing secret is needed.
+
+Declared rubric difference:
+- python:3.13-slim replaces the historical python:stretch requirement.
+- The exact Gunicorn entry point and port 8080 are preserved.
+- Please evaluate this documented image-version substitution against the original rubric.
+
+Other updates: Python 3.13/uv/uv.lock replace the old pip requirements workflow;
+current Flask/PyJWT APIs, AWS CLI v2, EKS 1.37, and kubectl 1.37.2 are used.
+Local names are .env, simple-flask-project, and simple-flask-container.
+
+Test-gate evidence:
+- Intentional-failure commit: d01c8400093f7a11ba43112d6b20ee62eca91dc5
+- Failed pipeline execution: 8dfc1287-f54e-4bce-af0d-63ebe861a0fd
+- Corrected successful execution: b3de9dbe-67cb-4e3f-89bd-4580d985e652
+- Final CodeBuild run: simple-jwt-api-pipeline:98bb9388-2e29-4b3c-a0f9-7ed56e4f0e65
+- Final result: 11 tests passed, successful rollout, three updated/ready replicas.
+- Failure evidence shows no new ECR tag or deployment update; the temporary assertion is removed.
+
+Evidence included: project README, baseline.json, failed-run.json, restored-run.json,
+and any additional screenshots/logs required by the submission page.
+The EKS deployment will remain available through review.
+```
+
+#### 5. Submit and keep the app available
+
+1. Recheck the final source, passing tests, live URL, evidence accessibility, and declared rubric difference. If any resource has been recreated, update the URL and notes first.
+2. Ensure intended source and documentation are committed/pushed or included in the upload. For this guide, commit the parent README/evidence and updated submodule pointer separately from fork commits; do not accidentally include unrelated lab changes. Confirm every referenced fork commit is already pushed.
+3. Open the course project's submission page and provide the repository URL or source ZIP in the accepted field, attach the evidence, and add the reviewer notes. Follow that page for any extra required fields; this guide does not establish its current UI or upload limits.
+4. Submit and retain the confirmation. If feedback requests corrections, record the changes and new verification evidence before resubmitting.
+5. Keep the EKS app and load balancer available until review and any resubmission are complete. Continue monitoring the resources you retain, and only then follow **Cleaning Up** below. The deployment continues incurring charges while running.
 
 ### Cleaning Up
 
