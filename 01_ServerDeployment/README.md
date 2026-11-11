@@ -192,9 +192,6 @@ Table of Contents:
       - [5. Create and run the container](#5-create-and-run-the-container)
       - [6. Check the endpoints](#6-check-the-endpoints)
     - [Part 2 A: Overview of the CD Pipeline](#part-2-a-overview-of-the-cd-pipeline)
-      - [1. Prepare the cluster and CodeBuild access](#1-prepare-the-cluster-and-codebuild-access)
-      - [2. Configure and deploy the pipeline](#2-configure-and-deploy-the-pipeline)
-      - [3. Add automated tests](#3-add-automated-tests)
     - [Part 2 B: Create EKS Cluster and IAM Role](#part-2-b-create-eks-cluster-and-iam-role)
       - [Prerequisites and working context](#prerequisites-and-working-context)
       - [1. Create and verify the EKS cluster](#1-create-and-verify-the-eks-cluster)
@@ -234,6 +231,10 @@ Table of Contents:
       - [4. Required for no remaining storage costs: remove retained data](#4-required-for-no-remaining-storage-costs-remove-retained-data)
       - [5. Optional: remove unused access, secrets, and local files](#5-optional-remove-unused-access-secrets-and-local-files)
     - [Project Rubric](#project-rubric)
+      - [Running Locally and Containerization](#running-locally-and-containerization)
+      - [Using CodePipeline and CodeBuild to Deploy](#using-codepipeline-and-codebuild-to-deploy)
+      - [Setting Up CodeBuild to Run Tests](#setting-up-codebuild-to-run-tests)
+      - [Suggestions to Make Your Project Stand Out](#suggestions-to-make-your-project-stand-out)
 
 ## Introduction
 
@@ -2811,7 +2812,7 @@ We can also pass a JSON file with parameters using the `--parameters` option. Th
   - A **`Type`** identifying the AWS resource, such as `AWS::EC2::VPC`.
   - **`Properties`** that configure that resource. The available properties differ by resource type.
   - Optional resource attributes such as **`DependsOn`**, which adds an explicit creation dependency, and **`DeletionPolicy`**, which controls what happens to a resource when the stack is deleted.
-- This template builds a VPC network with public and private subnets across two Availability Zones. **You do not need to understand every network resource to read the template**. The same pattern—logical ID, type, and configuration—applies to other CloudFormation resource types. Each resource has a job in the network:
+- This template builds a VPC network with public and private subnets across two Availability Zones. **You do not need to understand every network resource to read the template**. The same pattern--logical ID, type, and configuration--applies to other CloudFormation resource types. Each resource has a job in the network:
   - The **VPC** is the network boundary for these AWS resources. Its `10.0.0.0/16` CIDR block provides the IP address range from which its subnets are carved.
   - The **four subnets** are smaller IP ranges inside the VPC: one public and one private subnet in each of two Availability Zones. Subnets give resources a place in the network, and using two zones spreads resources across separate AWS locations for availability.
   - The **Internet Gateway (IGW)** is the VPC's connection point for internet-routable traffic. The `VPCGatewayAttachment` attaches the IGW to the VPC; creating an IGW alone does not connect it to the VPC.
@@ -4272,6 +4273,8 @@ Finally, revoke the GitHub token and remove it from your local `.env` if you cre
 
 ## Project: Deploy Your Flask App to Kubernetes Using EKS
 
+**Shell options:** Each terminal-command block below contains `# Bash` and `# PowerShell` alternatives. Run only the alternative for your shell, not the whole mixed block. PowerShell environment variables use `$env:NAME`; set them again in each new terminal. PowerShell HTTP examples use `Invoke-RestMethod` and built-in JSON handling to avoid the Windows `curl` alias and JSON-quoting differences. Dockerfile, YAML, JSON, Python, and CodeBuild configuration blocks retain their own syntax; CodeBuild's `shell: bash` runs on Linux in AWS.
+
 This section explains the project to be submitted. It is implemented in the folder [`./project`](./project/).
 
 ### Project Overview
@@ -4331,12 +4334,21 @@ The project starter has been updated from the course's Python 3.7–3.9 setup to
 Check the selected interpreter:
 
 ```bash
+# Bash
+uv run --locked python --version
+
+# PowerShell
 uv run --locked python --version
 ```
 
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/) 0.13.7 or newer if needed. It can install Python for you; [python.org](https://www.python.org/downloads/) is also available for manual downloads. From the project submodule, prepare the environment with:
 
 ```bash
+# Bash
+uv python install 3.13
+uv sync --locked
+
+# PowerShell
 uv python install 3.13
 uv sync --locked
 ```
@@ -4345,7 +4357,7 @@ Dependencies are declared in `pyproject.toml` and fixed in `uv.lock`; the old `r
 
 ##### Terminal and AWS tools
 
-Use the default terminal on macOS/Linux. On Windows, use Git Bash or Windows Subsystem for Linux (WSL); Gunicorn requires WSL or a Linux container on Windows.
+Use the default terminal on macOS/Linux. On Windows, use PowerShell or Git Bash for the matching command alternatives below; Gunicorn requires WSL or a Linux container on Windows.
 
 Install these command-line tools:
 
@@ -4356,6 +4368,16 @@ Install these command-line tools:
 For the AWS IAM Identity Center single sign-on (SSO) profile used in this guide:
 
 ```bash
+# Bash
+aws --version  # Confirm that the output starts with aws-cli/2.
+# Run the configuration wizard only if the profile is not already configured.
+aws configure sso --profile deployment-course
+aws configure set region eu-central-1 --profile deployment-course
+aws sso login --profile deployment-course
+aws sts get-caller-identity --profile deployment-course
+
+# PowerShell
+$env:PATH = "C:\Program Files\Amazon\AWSCLIV2;" + $env:PATH
 aws --version  # Confirm that the output starts with aws-cli/2.
 # Run the configuration wizard only if the profile is not already configured.
 aws configure sso --profile deployment-course
@@ -4371,6 +4393,11 @@ For an IAM access-key profile, use `aws configure --profile PROFILE_NAME` instea
 Fork the [Server Deployment and Containerization repository](https://github.com/udacity/cd0157-Server-Deployment-and-Containerization) into your GitHub account. For a standalone checkout outside this guide, clone your fork:
 
 ```bash
+# Bash
+git clone https://github.com/YOUR_GITHUB_USERNAME/cd0157-Server-Deployment-and-Containerization.git
+cd cd0157-Server-Deployment-and-Containerization
+
+# PowerShell
 git clone https://github.com/YOUR_GITHUB_USERNAME/cd0157-Server-Deployment-and-Containerization.git
 cd cd0157-Server-Deployment-and-Containerization
 ```
@@ -4380,14 +4407,23 @@ For this guide, the existing fork is [mxagar/udacity_server_deployment_exercises
 The one-time registration command, run from the guide repository root, is:
 
 ```bash
+# Bash
 git submodule add -b master \
   https://github.com/mxagar/udacity_server_deployment_exercises_cd0157.git \
   01_ServerDeployment/project/udacity_server_deployment_exercises_cd0157
+
+# PowerShell
+git submodule add -b master  https://github.com/mxagar/udacity_server_deployment_exercises_cd0157.git  01_ServerDeployment/project/udacity_server_deployment_exercises_cd0157
 ```
 
 Since it is already registered, existing clones should initialize it instead. From `01_ServerDeployment`:
 
 ```bash
+# Bash
+git submodule update --init --recursive -- project/udacity_server_deployment_exercises_cd0157
+cd project/udacity_server_deployment_exercises_cd0157
+
+# PowerShell
 git submodule update --init --recursive -- project/udacity_server_deployment_exercises_cd0157
 cd project/udacity_server_deployment_exercises_cd0157
 ```
@@ -4443,6 +4479,13 @@ Run the Flask application in `main.py` directly before containerizing it. Use th
 From `01_ServerDeployment`, enter the project submodule and prepare its separate environment:
 
 ```bash
+# Bash
+cd project/udacity_server_deployment_exercises_cd0157
+uv python install 3.13
+uv sync --locked
+uv run --locked python --version
+
+# PowerShell
 cd project/udacity_server_deployment_exercises_cd0157
 uv python install 3.13
 uv sync --locked
@@ -4463,26 +4506,48 @@ The app reads these settings when `main.py` is imported:
 In the terminal where you will start the server:
 
 ```bash
+# Bash
 export JWT_SECRET="$(uv run --locked python -c 'import secrets; print(secrets.token_hex(32))')"
 export LOG_LEVEL=DEBUG
 
 # Verify the settings without displaying the secret.
 test -n "$JWT_SECRET" && printf 'JWT_SECRET is set\n'
 printf 'LOG_LEVEL=%s\n' "$LOG_LEVEL"
+
+# PowerShell
+$env:JWT_SECRET = uv run --locked python -c 'import secrets; print(secrets.token_hex(32))'
+$env:LOG_LEVEL = 'DEBUG'
+
+# Verify the settings without displaying the secret.
+if ([string]::IsNullOrEmpty($env:JWT_SECRET)) { throw 'JWT_SECRET is missing' }
+Write-Output 'JWT_SECRET is set'
+Write-Output "LOG_LEVEL=$env:LOG_LEVEL"
 ```
 
-Keep the same secret while issuing and checking a token. Changing it and restarting the server invalidates tokens signed with the previous value.
+**You do not need a new JWT every time you restart the server.** An existing token remains valid until it expires, provided the server uses the same `JWT_SECRET`. This project's tokens last **two weeks**. Changing the signing secret invalidates tokens signed with the previous value.
+
+Generate the signing secret only for the initial setup; on subsequent starts, load the saved value from your local `.env` instead of rerunning the random-generation command above. The application does not load `.env` automatically. See [Reusing a JWT after restarting the server](./project/README.md#reusing-a-jwt-after-restarting-the-server) for the distinction between the signing secret, the issued token, and the client terminal's temporary `TOKEN` variable.
 
 #### 3. Start the development server and check its health
 
 ```bash
+# Bash
+uv run --locked python main.py
+
+# PowerShell
 uv run --locked python main.py
 ```
 
 Leave this terminal running. In a browser, open [http://127.0.0.1:8080/](http://127.0.0.1:8080/), or use a **second terminal**:
 
 ```bash
+# Bash
 curl --fail-with-body --silent --show-error http://127.0.0.1:8080/
+
+# PowerShell
+Invoke-RestMethod -Uri 'http://127.0.0.1:8080/'
+# or
+curl.exe --fail-with-body --silent --show-error http://127.0.0.1:8080/
 ```
 
 The response is:
@@ -4494,16 +4559,24 @@ The response is:
 To compare logging levels, stop the server with `Ctrl+C` in its terminal and restart it with:
 
 ```bash
+# Bash
 LOG_LEVEL=INFO uv run --locked python main.py
+
+# PowerShell
+$env:LOG_LEVEL = 'INFO'
+uv run --locked python main.py
 ```
 
 The startup debug message now disappears because `INFO` filters out `DEBUG` events. Environment changes affect the app after a restart. This setting controls application logging; the Flask development server still runs in development mode. The Docker deployment uses Gunicorn as described in the app overview.
 
 #### 4. Install jq for the endpoint examples
 
-`jq` parses, filters, modifies, and pretty-prints JavaScript Object Notation (JSON). Install it in the second terminal using the command for your system:
+**PowerShell users: skip this installation and continue to step 5.** The PowerShell alternatives use `Invoke-RestMethod`, which parses JSON responses into objects, and `ConvertTo-Json` for formatting. They do not require `jq` or Chocolatey.
+
+For the **Bash alternatives**, `jq` parses, filters, modifies, and pretty-prints JavaScript Object Notation (JSON). Install it in the second terminal using the command for your system:
 
 ```bash
+# Bash
 # macOS
 brew install jq
 
@@ -4512,15 +4585,39 @@ sudo apt-get install jq
 
 # Windows with Chocolatey
 choco install jq
+
+# PowerShell
+winget install jqlang.jq
 ```
 
 The optional [jq tutorial](https://jqlang.org/tutorial/) explains its filters; completing it is not required for submission.
 
+If `choco install jq` fails in a non-elevated terminal with access denied under `C:\ProgramData\chocolatey`, skip it when following the PowerShell examples. Such an error does not affect the Flask app or these PowerShell requests. A lock-access error alone does not establish that a lock is stale; deleting Chocolatey lock files is not required for this project.
+
 #### 5. Call /auth and save the token
+
+If PowerShell reports **Unable to connect to the remote server**, first start the app and leave its terminal running. A connection failure happens before the request body or JWT is processed. From the project submodule, in **terminal 1**, reuse the saved local `.env` secret if present:
+
+```powershell
+# PowerShell -- terminal 1, from the project submodule.
+$env:JWT_SECRET = (Get-Content .env | Where-Object { $_ -match '^JWT_SECRET=' }) -replace '^JWT_SECRET=', ''
+if ([string]::IsNullOrEmpty($env:JWT_SECRET)) { throw 'JWT_SECRET is missing from .env' }
+uv run --locked python main.py
+```
+
+The `.env` file belongs to your local setup and is not committed. If you have not created it, use the environment setup in step 2 instead. Wait for Flask to report that it is serving `http://127.0.0.1:8080`. In **terminal 2**, verify connectivity before requesting a token:
+
+```powershell
+# PowerShell -- terminal 2.
+Invoke-RestMethod -Uri 'http://127.0.0.1:8080/'
+```
+
+Expected: `Healthy`. If you are running the Docker example with host port **80**, use `http://localhost:80` for all three endpoints instead. Docker Desktop must be running for the container workflow; the direct Flask workflow above does not need Docker. The server and requests must run on the same machine for `127.0.0.1` to refer to that server.
 
 In the second terminal, submit an email and password, replacing the sample values as needed:
 
 ```bash
+# Bash
 TOKEN=$(curl --fail-with-body --silent --show-error \
   --request POST http://127.0.0.1:8080/auth \
   --header 'Content-Type: application/json' \
@@ -4528,9 +4625,16 @@ TOKEN=$(curl --fail-with-body --silent --show-error \
   | jq -er '.token')
 export TOKEN
 printf '%s\n' "$TOKEN"
+
+# PowerShell
+$body = @{ email = 'abc@xyz.com'; password = 'mypwd' } | ConvertTo-Json -Compress
+$auth = Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8080/auth' -ContentType 'application/json' -Body $body
+$TOKEN = $auth.token
+if ([string]::IsNullOrEmpty($TOKEN)) { throw 'Response did not contain a token' }
+# Keep the token in this terminal for the next request; do not print it in shared logs.
 ```
 
-The response contains a `token` field. `jq -er '.token'` extracts its string value and reports an error if it is missing or null. `TOKEN` stores the issued token, not the signing secret. This starter demonstrates token issuance; it does not check the supplied credentials against a user database.
+The response contains a `token` field. Bash uses `jq -er '.token'` to extract its string value and report an error if it is missing or null. PowerShell reads `$auth.token` directly and checks that it is nonempty. `TOKEN` stores the issued token, not the signing secret. This starter demonstrates token issuance; it does not check the supplied credentials against a user database.
 
 #### 6. Troubleshoot dependency or response errors
 
@@ -4546,6 +4650,11 @@ The obsolete byte-to-text `.decode('utf-8')` call caused the error. **`jwt.decod
 To check the PyJWT version or run the local regression tests, use the project directory:
 
 ```bash
+# Bash
+uv run --locked python -c 'import jwt; print(jwt.__version__)'
+uv run --locked pytest
+
+# PowerShell
 uv run --locked python -c 'import jwt; print(jwt.__version__)'
 uv run --locked pytest
 ```
@@ -4557,10 +4666,19 @@ If your environment is out of sync, repeat step 1.
 In the same second terminal where `TOKEN` is set:
 
 ```bash
+# Bash
 curl --fail-with-body --silent --show-error \
   http://127.0.0.1:8080/contents \
   --header "Authorization: Bearer ${TOKEN}" \
   | jq .
+
+# PowerShell
+Invoke-RestMethod -Uri 'http://127.0.0.1:8080/contents' -Headers @{ Authorization = "Bearer $TOKEN" } | ConvertTo-Json
+# or
+curl.exe --fail-with-body --silent --show-error `
+  http://127.0.0.1:8080/contents `
+  --header "Authorization: Bearer ${TOKEN}" `
+  | ConvertTo-Json
 ```
 
 The response includes the email submitted above and the token's `exp` and `nbf` timestamps. The client supplies the token; the server verifies its signature and validity using `JWT_SECRET`. The payload is not encrypted. Missing, expired, malformed, or incorrectly signed tokens produce status `401`.
@@ -4609,13 +4727,21 @@ The original course used an Amazon Elastic Container Registry (ECR) Public build
 
 #### 2. Store the container's environment settings
 
-Containers do not automatically inherit your terminal's environment variables. Create `.env_file` in the project directory so Docker can pass `JWT_SECRET` and `LOG_LEVEL` to the application at startup.
+Containers do not automatically inherit your terminal's environment variables. Create `.env` in the project directory so Docker can pass `JWT_SECRET` and `LOG_LEVEL` to the application at startup.
 
 Generate the secret and write the file:
 
 ```bash
+# Bash
 JWT_SECRET=$(uv run --locked python -c 'import secrets; print(secrets.token_hex(32))')
-printf 'JWT_SECRET=%s\nLOG_LEVEL=DEBUG\n' "$JWT_SECRET" > .env_file
+printf 'JWT_SECRET=%s\nLOG_LEVEL=DEBUG\n' "$JWT_SECRET" > .env
+
+# PowerShell
+$JWT_SECRET = uv run --locked python -c 'import secrets; print(secrets.token_hex(32))'
+# Write UTF-8 without a BOM, including on Windows PowerShell 5.1.
+$envFile = Join-Path (Get-Location) '.env'
+[System.IO.File]::WriteAllText($envFile, "JWT_SECRET=$JWT_SECRET`nLOG_LEVEL=DEBUG`n", [System.Text.UTF8Encoding]::new($false))
+Remove-Variable JWT_SECRET
 ```
 
 Its format is plain `KEY=value`, without `export` or surrounding quotes:
@@ -4625,19 +4751,45 @@ JWT_SECRET=your-generated-secret
 LOG_LEVEL=DEBUG
 ```
 
+**Docker environment-file quoting:** write `LOG_LEVEL=DEBUG`, not `LOG_LEVEL="DEBUG"`. Docker passes the quote characters literally, which makes Python logging reject the value with `ValueError: Unknown level: '"DEBUG"'` and causes Gunicorn's worker to fail at startup. After correcting `.env`, recreate the container to load the new value; restarting the old container retains its original environment. For a failed, stopped project container, use:
+
+```text
+# Bash
+docker rm simple-flask-container
+docker run --detach --name simple-flask-container --env-file .env -p 127.0.0.1:80:8080 simple-flask-project
+curl --fail-with-body --silent --show-error http://127.0.0.1:80/
+
+# PowerShell
+docker rm simple-flask-container
+docker run --detach --name simple-flask-container --env-file .env -p 127.0.0.1:80:8080 simple-flask-project
+Invoke-RestMethod -Uri 'http://127.0.0.1:80/'
+```
+
+Expected: `Healthy`. These recovery commands start the container in the background; use `docker logs simple-flask-container` to view its logs.
+
+**Container name already in use:** `docker run` creates a new container. If `simple-flask-container` already exists, check it with `docker ps -a --filter name=simple-flask-container`. If it is running, continue to the endpoint checks at `http://127.0.0.1:80/`; no new `docker run` is needed. If it is stopped and its existing configuration is correct, use `docker start simple-flask-container`. To view a running container's logs, use `docker logs -f simple-flask-container`. These commands work in both Bash and PowerShell. Recreate it only when changing its configuration, such as values loaded from `.env`.
+
 The existing `.gitignore` keeps this local file out of Git, and `.dockerignore` keeps it out of the image. You can confirm the Git rule with:
 
 ```bash
-git check-ignore .env_file
+# Bash
+git check-ignore .env
+
+# PowerShell
+git check-ignore .env
 ```
 
-For the later cloud deployment, use a secret-management service such as AWS Systems Manager Parameter Store. Changing `.env_file` requires recreating the container to load the new values; rebuilding the image is unnecessary.
+For the later cloud deployment, use a secret-management service such as AWS Systems Manager Parameter Store. Changing `.env` requires recreating the container to load the new values; rebuilding the image is unnecessary.
 
 #### 3. Start Docker Desktop
 
 Open Docker Desktop and wait for its engine to be ready. Confirm the terminal can reach it:
 
 ```bash
+# Bash
+docker info
+
+# PowerShell
 docker info
 ```
 
@@ -4646,7 +4798,16 @@ docker info
 From the directory containing the Dockerfile:
 
 ```bash
-docker build -t myimage .
+# Bash
+docker build -t simple-flask-project .
+
+# List available images.
+docker image ls
+# Optional cleanup after the exercise: replace IMAGE_ID with the unused image's ID.
+# docker image rm IMAGE_ID
+
+# PowerShell
+docker build -t simple-flask-project .
 
 # List available images.
 docker image ls
@@ -4654,17 +4815,30 @@ docker image ls
 # docker image rm IMAGE_ID
 ```
 
-The final `.` supplies the current directory as the build context. Docker reads the Dockerfile, installs dependencies in the image, and tags the result `myimage`. After removing any containers that reference it, you can remove an unused image with the cleanup command above.
+The final `.` supplies the current directory as the build context. Docker reads the Dockerfile, installs dependencies in the image, and tags the result `simple-flask-project`. After removing any containers that reference it, you can remove an unused image with the cleanup command above.
 
 #### 5. Create and run the container
 
 Pass the settings file with `--env-file` and publish **host port 80 -> container port 8080**:
 
 ```bash
-docker run --name myContainer \
-  --env-file=.env_file \
+# Bash
+docker run --name simple-flask-container \
+  --env-file=.env \
   -p 127.0.0.1:80:8080 \
-  myimage
+  simple-flask-project
+
+# PowerShell
+docker run --name simple-flask-container  --env-file=.env  -p 127.0.0.1:80:8080  simple-flask-project
+
+# To check running containers
+docker container ls
+docker ps
+
+# To stop the container, run:
+docker stop simple-flask-container
+docker start simple-flask-container  # to start it again after stopping it
+docker rm simple-flask-container  # or to remove it after stopping it
 ```
 
 The `127.0.0.1` binding makes the published port available on your own computer. Leave this terminal open to view Gunicorn and application logs; use a second terminal for the requests below. If port `80` is unavailable, use `-p 127.0.0.1:8081:8080` and substitute host port `8081` in those requests.
@@ -4672,13 +4846,23 @@ The `127.0.0.1` binding makes the published port available on your own computer.
 Useful container commands, run from the second terminal:
 
 ```bash
+# Bash
 # List running containers; these two commands are equivalent.
 docker container ls
 docker ps
 
-# Run these when finished, before reusing the name myContainer.
-# docker container stop myContainer
-# docker container rm myContainer
+# Run these when finished, before reusing the name simple-flask-container.
+# docker container stop simple-flask-container
+# docker container rm simple-flask-container
+
+# PowerShell
+# List running containers; these two commands are equivalent.
+docker container ls
+docker ps
+
+# Run these when finished, before reusing the name simple-flask-container.
+# docker container stop simple-flask-container
+# docker container rm simple-flask-container
 ```
 
 You can also substitute a container ID from `docker ps` for its name. Stopping a container ends its process; removing it frees the name. Keep it running while completing step 6.
@@ -4688,12 +4872,22 @@ You can also substitute a container ID from `docker ps` for its name. Stopping a
 Use the same endpoint workflow as Part 1 A, targeting the published host port:
 
 ```bash
+# Bash
 # Gunicorn serving Flask inside the container, reached through host port 80.
 curl --fail-with-body --silent --show-error http://localhost:80/
 
 # Comparison only: the separate Flask development server from Part 1 A uses port 8080.
 # Run this only if that server is also running.
 # curl --request GET http://localhost:8080/
+
+# PowerShell
+# Gunicorn serving Flask inside the container, reached through host port 80.
+Invoke-RestMethod -Uri 'http://localhost:80/'
+# or
+curl.exe --fail-with-body --silent --show-error http://localhost:80/
+
+# Comparison only: run if the separate development server is also running.
+# Invoke-RestMethod -Uri 'http://localhost:8080/'
 ```
 
 The health check returns `"Healthy"`. You can also open [http://localhost:80/](http://localhost:80/) in a browser.
@@ -4701,6 +4895,7 @@ The health check returns `"Healthy"`. You can also open [http://localhost:80/](h
 Issue a token, then pass it to the contents endpoint:
 
 ```bash
+# Bash
 # Send the email and password as JSON and extract the returned token.
 TOKEN=$(curl --fail-with-body --silent --show-error \
   --request POST http://localhost:80/auth \
@@ -4715,49 +4910,62 @@ curl --fail-with-body --silent --show-error \
   http://localhost:80/contents \
   --header "Authorization: Bearer ${TOKEN}" \
   | jq .
+
+# PowerShell
+# Send the email and password as JSON and extract the returned token.
+$body = @{ email = 'abc@xyz.com'; password = 'WindowsPwd' } | ConvertTo-Json -Compress
+$auth = Invoke-RestMethod -Method Post -Uri 'http://localhost:80/auth' -ContentType 'application/json' -Body $body
+$TOKEN = $auth.token
+if ([string]::IsNullOrEmpty($TOKEN)) { throw 'Response did not contain a token' }
+
+# Verify the token and return its claims.
+Invoke-RestMethod -Uri 'http://localhost:80/contents' -Headers @{ Authorization = "Bearer $TOKEN" } | ConvertTo-Json
 ```
 
-The response includes the submitted email and its `exp` and `nbf` timestamps. This verifies the complete container workflow, including its runtime secret configuration. Stop and remove `myContainer` using the commands in step 5 when you finish.
+The response includes the submitted email and its `exp` and `nbf` timestamps. This verifies the complete container workflow, including its runtime secret configuration. Stop and remove `simple-flask-container` using the commands in step 5 when you finish.
 
 ### Part 2 A: Overview of the CD Pipeline
 
-Extend the locally tested container into a **continuous integration (CI)** and **continuous delivery (CD)** pipeline on Amazon Web Services (AWS). Reuse the Python 3.13, uv, and locked-dependency setup from Part 1 while completing the following stages in order.
+**Overview only: every point below is implemented in the successive sections--Part 2 B (cluster and access), Part 2 C (pipeline deployment), and Part 2 D (test gate).** The goal is to extend the locally tested container into a **continuous integration (CI)** and **continuous delivery (CD)** pipeline on Amazon Web Services (AWS), reusing Part 1's Python 3.13, uv, and locked dependencies.
 
-#### 1. Prepare the cluster and CodeBuild access
-
-- **Create the cluster:** Use `eksctl` to create an Amazon Elastic Kubernetes Service (EKS) cluster in your preferred region. Keep it in the same region as the pipeline; this guide uses `eu-central-1`.
-- **Create the deployment role manually:** Define the AWS Identity and Access Management (IAM) role that CodeBuild will assume. Use the provided `trust.json` and `iam-role-policy.json` policy files to configure its trust relationship and required AWS permissions.
-- **Authorize Kubernetes operations:** Map that role to the appropriate Kubernetes identity and groups through the cluster's `aws-auth` ConfigMap, following the exercise's role-based access control (RBAC) pattern.
-
-#### 2. Configure and deploy the pipeline
-
-- **GitHub access:** Generate a GitHub access token and supply it through the template's parameters. It authorizes CodePipeline's source action to retrieve the monitored repository.
-- **Infrastructure:** Deploy [`ci-cd-codepipeline.cfn.yml`](./project/udacity_server_deployment_exercises_cd0157/ci-cd-codepipeline.cfn.yml) with AWS CloudFormation to create CodePipeline, CodeBuild, and their supporting resources. CodeBuild executes the commands in [`buildspec.yml`](./project/udacity_server_deployment_exercises_cd0157/buildspec.yml).
-- **Runtime secret:** Store the application's `JWT_SECRET` signing secret as a `SecureString` in AWS Systems Manager Parameter Store. The buildspec's `parameter-store` mapping retrieves it into CodeBuild's environment; configure its delivery to the application containers as part of the Kubernetes deployment.
-- **Build and deploy:** Push a commit to the monitored branch. CodePipeline starts CodeBuild, which builds the image, pushes it to Amazon Elastic Container Registry (ECR), and applies the Kubernetes application manifest. The cluster then serves the Flask application through Gunicorn and its Kubernetes Service.
-
-#### 3. Add automated tests
-
-After the first working deployment, integrate the project's pytest tests into the build using uv. Make passing tests a requirement for publishing the image and deploying it, so a failing commit cannot update the running application.
-
-The following sections cover cluster access, pipeline deployment, and then the automated test gate in detail.
+- **EKS cluster:** Create an Amazon Elastic Kubernetes Service (EKS) cluster with `eksctl` in your chosen region, matching the pipeline's region (`eu-central-1` in this guide).
+- **Deployment role:** Manually configure the AWS Identity and Access Management (IAM) role CodeBuild will assume, using `trust.json` for its trust relationship and `iam-role-policy.json` for AWS permissions.
+- **Kubernetes access:** Map the role to Kubernetes identities and groups through the cluster's `aws-auth` ConfigMap, following the exercise's role-based access control (RBAC) pattern.
+- **GitHub access:** Supply a GitHub access token through the template parameters so CodePipeline's source action can retrieve the monitored repository.
+- **Pipeline infrastructure:** Deploy [`ci-cd-codepipeline.cfn.yml`](./project/udacity_server_deployment_exercises_cd0157/ci-cd-codepipeline.cfn.yml) with AWS CloudFormation to create CodePipeline, CodeBuild, and supporting resources. CodeBuild runs [`buildspec.yml`](./project/udacity_server_deployment_exercises_cd0157/buildspec.yml).
+- **Runtime secret:** Store `JWT_SECRET` as a `SecureString` in AWS Systems Manager Parameter Store. The buildspec's `parameter-store` mapping loads it into CodeBuild; separately configure its delivery to the application containers through Kubernetes.
+- **Build and deploy:** A push to the monitored branch triggers CodePipeline and CodeBuild to build the image, push it to Amazon Elastic Container Registry (ECR), and apply the Kubernetes manifest. Gunicorn and a Kubernetes Service serve the Flask app.
+- **Automated tests:** After the first working deployment, integrate pytest into the build using uv. Require passing tests before publishing an image or deploying, so a failing commit cannot update the running app.
 
 
 ### Part 2 B: Create EKS Cluster and IAM Role
 
 #### Prerequisites and working context
 
-Use AWS Command Line Interface (CLI) v2, `eksctl`, and `kubectl`. The commands below use Bash on macOS/Linux or Git Bash/Windows Subsystem for Linux (WSL) on Windows. Run them from the project submodule, `01_ServerDeployment/project/udacity_server_deployment_exercises_cd0157/`, where the policy files are located.
+Use AWS Command Line Interface (CLI) v2, `eksctl`, and `kubectl`. Use the Bash alternatives on macOS/Linux or Git Bash/WSL, and the PowerShell alternatives on Windows. Run them from the project submodule, `01_ServerDeployment/project/udacity_server_deployment_exercises_cd0157/`, where the policy files are located.
 
 Keep these settings in the same terminal session:
 
 ```bash
+# Bash
 export AWS_PROFILE="deployment-course"
 export AWS_DEFAULT_REGION="eu-central-1"
 CLUSTER_NAME="simple-jwt-api"
 KUBERNETES_VERSION="1.37"
 
 aws sso login --profile "$AWS_PROFILE"
+aws sts get-caller-identity
+aws --version
+eksctl version
+kubectl version --client
+
+# PowerShell
+$env:AWS_PROFILE = "deployment-course"
+$env:AWS_DEFAULT_REGION = "eu-central-1"
+$env:CLUSTER_NAME = "simple-jwt-api"
+$env:KUBERNETES_VERSION = "1.37"
+
+aws sso login --profile "$env:AWS_PROFILE"
 aws sts get-caller-identity
 aws --version
 eksctl version
@@ -4772,7 +4980,8 @@ The project now targets **Kubernetes 1.37** and **kubectl 1.37.2**, which is als
 
 Create an Amazon Elastic Kubernetes Service (EKS) cluster named `simple-jwt-api` with two `t3.medium` worker nodes:
 
-```bash
+```text
+# Bash
 eksctl create cluster \
   --name "$CLUSTER_NAME" \
   --nodes 2 \
@@ -4780,17 +4989,26 @@ eksctl create cluster \
   --instance-types t3.medium \
   --region "$AWS_DEFAULT_REGION" \
   --profile "$AWS_PROFILE"
+
+# PowerShell
+eksctl create cluster  --name "$env:CLUSTER_NAME"  --nodes 2  --version "$env:KUBERNETES_VERSION"  --instance-types t3.medium  --region "$env:AWS_DEFAULT_REGION"  --profile "$env:AWS_PROFILE"
 ```
 
 This replaces the course's obsolete Kubernetes 1.22 example. Version 1.37 is currently supported in `eu-central-1`; if you choose another region, verify version and instance availability there. Cluster creation takes several minutes and provisions the control plane and a managed node group containing two nodes.
 
 Monitor the **EKS dashboard** in the selected region and the **CloudFormation console** for the cluster and node-group stacks. Refresh kubeconfig with the same profile, then verify that both nodes are `Ready`:
 
-```bash
+```text
+# Bash
 aws eks update-kubeconfig \
   --name "$CLUSTER_NAME" \
   --region "$AWS_DEFAULT_REGION" \
   --profile "$AWS_PROFILE"
+kubectl config current-context
+kubectl get nodes
+
+# PowerShell
+aws eks update-kubeconfig  --name "$env:CLUSTER_NAME"  --region "$env:AWS_DEFAULT_REGION"  --profile "$env:AWS_PROFILE"
 kubectl config current-context
 kubectl get nodes
 ```
@@ -4799,10 +5017,14 @@ If Kubernetes reports `Unauthorized`, confirm the profile saved in kubeconfig an
 
 The manual `aws-auth` mapping used below requires authentication mode `CONFIG_MAP` or `API_AND_CONFIG_MAP`. Current `eksctl` defaults to the latter; verify it after creation:
 
-```bash
+```text
+# Bash
 aws eks describe-cluster --name "$CLUSTER_NAME" \
   --query 'cluster.{version:version,authenticationMode:accessConfig.authenticationMode}' \
   --output table
+
+# PowerShell
+aws eks describe-cluster --name "$env:CLUSTER_NAME"  --query 'cluster.{version:version,authenticationMode:accessConfig.authenticationMode}'  --output table
 ```
 
 An `API`-only cluster does not use `aws-auth`. For this exercise, create or reuse a cluster that supports the ConfigMap method rather than applying an ineffective mapping.
@@ -4811,13 +5033,18 @@ An `API`-only cluster does not use `aws-auth`. For this exercise, create or reus
 
 The cluster, worker nodes, and supporting networking incur charges while retained. Keep them for the project and review, then remove any exercise LoadBalancer Services or Ingresses before deleting the cluster:
 
-```bash
+```text
+# Bash
 # Run after receiving feedback and removing the exercise load balancers.
 eksctl delete cluster \
   --name "$CLUSTER_NAME" \
   --region "$AWS_DEFAULT_REGION" \
   --profile "$AWS_PROFILE" \
   --wait
+
+# PowerShell
+# Run after receiving feedback and removing the exercise load balancers.
+eksctl delete cluster  --name "$env:CLUSTER_NAME"  --region "$env:AWS_DEFAULT_REGION"  --profile "$env:AWS_PROFILE"  --wait
 ```
 
 The [earlier cleanup procedure](#final-pipeline-clean-up) explains the deletion order. The remaining steps below prepare access while the cluster is running.
@@ -4828,7 +5055,11 @@ CodeBuild will assume `UdacityFlaskDeployCBKubectlRole` to access EKS. The **tru
 
 ##### Get the account ID and prepare the trust policy
 
-```bash
+```text
+# Bash
+aws sts get-caller-identity --query Account --output text
+
+# PowerShell
 aws sts get-caller-identity --query Account --output text
 ```
 
@@ -4855,11 +5086,15 @@ The account principal identifies the AWS account; it does not require signing in
 
 If the role is absent, create it from the project directory:
 
-```bash
+```text
+# Bash
 aws iam create-role \
   --role-name UdacityFlaskDeployCBKubectlRole \
   --assume-role-policy-document file://trust.json \
   --output text --query 'Role.Arn'
+
+# PowerShell
+aws iam create-role  --role-name UdacityFlaskDeployCBKubectlRole  --assume-role-policy-document file://trust.json  --output text --query 'Role.Arn'
 ```
 
 Save the returned Amazon Resource Name (ARN), which has this form:
@@ -4888,11 +5123,15 @@ The provided [`iam-role-policy.json`](./project/udacity_server_deployment_exerci
 
 Attach it as the inline policy `eks-describe`:
 
-```bash
+```text
+# Bash
 aws iam put-role-policy \
   --role-name UdacityFlaskDeployCBKubectlRole \
   --policy-name eks-describe \
   --policy-document file://iam-role-policy.json
+
+# PowerShell
+aws iam put-role-policy  --role-name UdacityFlaskDeployCBKubectlRole  --policy-name eks-describe  --policy-document file://iam-role-policy.json
 ```
 
 In **IAM -> Roles -> UdacityFlaskDeployCBKubectlRole**, verify its trust relationship and permissions. If `create-role` returns `EntityAlreadyExists`, inspect and reuse the existing exercise role; do not delete it just to rerun the command.
@@ -4905,24 +5144,43 @@ Repeat this mapping for **each newly created cluster**, even when reusing the IA
 
 Use a temporary file so you edit the current cluster configuration rather than the repository's illustrative sample:
 
-```bash
+```text
+# Bash
 AUTH_PATCH=/tmp/aws-auth-patch.yml
 kubectl get configmap/aws-auth --namespace kube-system -o yaml > "$AUTH_PATCH"
+
+# PowerShell
+$AUTH_PATCH = Join-Path ([System.IO.Path]::GetTempPath()) 'aws-auth-patch.yml'
+$authYaml = kubectl get configmap/aws-auth --namespace kube-system -o yaml
+if ($LASTEXITCODE -ne 0) { throw 'Could not fetch aws-auth; inspect the error before continuing' }
+[System.IO.File]::WriteAllText($AUTH_PATCH, ($authYaml -join "`n") + "`n", [System.Text.UTF8Encoding]::new($false))
 ```
 
 If this returns `NotFound` on a new `API_AND_CONFIG_MAP` cluster whose managed nodes are already `Ready`, its node access may be supplied by EKS access entries. Create the missing ConfigMap, then repeat the fetch:
 
-```bash
+```text
+# Bash
 # Only if aws-auth is absent; never replace an existing ConfigMap with an empty one.
 kubectl create configmap aws-auth --namespace kube-system --from-literal=mapRoles='[]'
 kubectl get configmap/aws-auth --namespace kube-system -o yaml > "$AUTH_PATCH"
+
+# PowerShell
+# Only if aws-auth is absent; never replace an existing ConfigMap with an empty one.
+kubectl create configmap aws-auth --namespace kube-system --from-literal=mapRoles=[]
+$authYaml = kubectl get configmap/aws-auth --namespace kube-system -o yaml
+if ($LASTEXITCODE -ne 0) { throw 'Could not fetch aws-auth' }
+[System.IO.File]::WriteAllText($AUTH_PATCH, ($authYaml -join "`n") + "`n", [System.Text.UTF8Encoding]::new($false))
 ```
 
 ##### Edit the role mapping
 
 Open the fetched file in an editor; with the Visual Studio Code command available:
 
-```bash
+```text
+# Bash
+code "$AUTH_PATCH"
+
+# PowerShell
 code "$AUTH_PATCH"
 ```
 
@@ -4943,9 +5201,13 @@ Use the corrected [sample `aws-auth-patch.yml`](./project/udacity_server_deploym
 
 ##### Patch the ConfigMap and verify
 
-```bash
+```text
+# Bash
 kubectl patch configmap/aws-auth --namespace kube-system \
   --type merge --patch-file "$AUTH_PATCH"
+
+# PowerShell
+kubectl patch configmap/aws-auth --namespace kube-system  --type merge --patch-file "$AUTH_PATCH"
 ```
 
 The expected response is:
@@ -4964,7 +5226,11 @@ Repeat **fetch -> edit -> patch** using the latest ConfigMap. Keep its fresh met
 
 Finally, confirm that the nodes remain healthy:
 
-```bash
+```text
+# Bash
+kubectl get nodes
+
+# PowerShell
 kubectl get nodes
 ```
 
@@ -4993,7 +5259,7 @@ Open the template's `Parameters` section, update the non-secret defaults for you
 | Parameter | Value for this project |
 | --- | --- |
 | `EksClusterName` | `simple-jwt-api`, matching Part 2 B |
-| `GitSourceRepo` | `udacity_server_deployment_exercises_cd0157` — repository name, not its URL |
+| `GitSourceRepo` | `udacity_server_deployment_exercises_cd0157` -- repository name, not its URL |
 | `GitBranch` | `master`, the branch monitored in this fork |
 | `GitHubUser` | `mxagar`, or your own fork's owner |
 | `CodeBuildDockerImage` | `aws/codebuild/standard:8.0`, matching the Python 3.13 build runtime |
@@ -5034,7 +5300,8 @@ A new pipeline normally starts an execution automatically. If `JWT_SECRET` has n
 
 The `/auth` endpoint needs `JWT_SECRET` to sign tokens. Store its value as a `SecureString` in [AWS Systems Manager Parameter Store](https://docs.aws.amazon.com/systems-manager/latest/userguide/systems-manager-parameter-store.html):
 
-```bash
+```text
+# Bash
 export JWT_SECRET="$(uv run --locked python -c 'import secrets; print(secrets.token_hex(32))')"
 aws ssm put-parameter \
   --name JWT_SECRET \
@@ -5045,6 +5312,14 @@ aws ssm put-parameter \
 # Verify the parameter metadata without displaying its decrypted value.
 aws ssm get-parameter --name JWT_SECRET \
   --query 'Parameter.{Name:Name,Type:Type,Version:Version}' --output table
+
+# PowerShell
+$env:JWT_SECRET = uv run --locked python -c 'import secrets; print(secrets.token_hex(32))'
+aws ssm put-parameter --name JWT_SECRET --overwrite --value $env:JWT_SECRET --type SecureString
+if ($LASTEXITCODE -ne 0) { throw 'Parameter creation failed' }
+
+# Verify the parameter metadata without displaying its decrypted value.
+aws ssm get-parameter --name JWT_SECRET --query 'Parameter.{Name:Name,Type:Type,Version:Version}' --output table
 ```
 
 Use `--overwrite` for this exercise's parameter when intentionally replacing its value.
@@ -5053,7 +5328,8 @@ Use `--overwrite` for this exercise's parameter when intentionally replacing its
 
 The buildspec's Parameter Store mapping configures the **CodeBuild environment**. Configure the application containers to receive the value too: copy the stored value into a Kubernetes Secret in the application's namespace, using your authorized cluster context.
 
-```bash
+```text
+# Bash
 JWT_SECRET=$(aws ssm get-parameter --name JWT_SECRET --with-decryption \
   --query 'Parameter.Value' --output text)
 
@@ -5061,6 +5337,20 @@ kubectl create secret generic jwt-secret --namespace default \
   --from-literal=JWT_SECRET="$JWT_SECRET" \
   --dry-run=client -o yaml | kubectl apply -f -
 unset JWT_SECRET
+
+# PowerShell
+$JWT_SECRET = aws ssm get-parameter --name JWT_SECRET --with-decryption --query 'Parameter.Value' --output text
+if ($LASTEXITCODE -ne 0) { throw 'Secret retrieval failed' }
+try {
+    $secretYaml = kubectl create secret generic jwt-secret --namespace default "--from-literal=JWT_SECRET=$JWT_SECRET" --dry-run=client -o yaml
+    if ($LASTEXITCODE -ne 0) { throw 'Secret manifest generation failed' }
+    $secretYaml | kubectl apply -f -
+    if ($LASTEXITCODE -ne 0) { throw 'Secret apply failed' }
+} finally {
+    Remove-Variable JWT_SECRET -ErrorAction SilentlyContinue
+    Remove-Variable secretYaml -ErrorAction SilentlyContinue
+    Remove-Item Env:JWT_SECRET -ErrorAction SilentlyContinue
+}
 ```
 
 In [`simple_jwt_api.yml`](./project/udacity_server_deployment_exercises_cd0157/simple_jwt_api.yml), add this `env` block inside the existing `spec.template.spec.containers` entry named `simple-jwt-api`, alongside its `image`, `securityContext`, and `ports` settings:
@@ -5078,7 +5368,12 @@ Commit the manifest reference with your deployment changes; keep the secret valu
 
 After project submission and feedback, you may delete the Parameter Store entry if no other workload needs it:
 
-```bash
+```text
+# Bash
+# Optional cleanup after feedback.
+aws ssm delete-parameter --name JWT_SECRET
+
+# PowerShell
 # Optional cleanup after feedback.
 aws ssm delete-parameter --name JWT_SECRET
 ```
@@ -5091,7 +5386,11 @@ CodeBuild reads [`buildspec.yml`](./project/udacity_server_deployment_exercises_
 
 The project targets Kubernetes 1.37 and pins `KUBECTL_VERSION` to `v1.37.2`. Check the local client with:
 
-```bash
+```text
+# Bash
+kubectl version --client
+
+# PowerShell
 kubectl version --client
 ```
 
@@ -5134,16 +5433,27 @@ Error: You must be logged in to the server (the server has asked for the client 
 
 Check the deployment-role ARN, its trust relationship and AWS permissions, and its Kubernetes mapping from Part 2 B. To refresh that mapping, fetch the current ConfigMap using an identity that already has cluster administrator access:
 
-```bash
+```text
+# Bash
 AUTH_PATCH=/tmp/aws-auth-patch.yml
 kubectl get configmap/aws-auth --namespace kube-system -o yaml > "$AUTH_PATCH"
+
+# PowerShell
+$AUTH_PATCH = Join-Path ([System.IO.Path]::GetTempPath()) 'aws-auth-patch.yml'
+$authYaml = kubectl get configmap/aws-auth --namespace kube-system -o yaml
+if ($LASTEXITCODE -ne 0) { throw 'Could not fetch aws-auth; inspect the error before continuing' }
+[System.IO.File]::WriteAllText($AUTH_PATCH, ($authYaml -join "`n") + "`n", [System.Text.UTF8Encoding]::new($false))
 ```
 
 Edit `data.mapRoles` as described in Part 2 B, preserving existing entries and inserting the correct account and deployment role. Then patch from the edited file:
 
-```bash
+```text
+# Bash
 kubectl patch configmap/aws-auth --namespace kube-system \
   --type merge --patch-file "$AUTH_PATCH"
+
+# PowerShell
+kubectl patch configmap/aws-auth --namespace kube-system  --type merge --patch-file "$AUTH_PATCH"
 ```
 
 ##### A standalone CodeBuild start lacks pipeline artifacts
@@ -5164,7 +5474,20 @@ Also review **CloudFormation -> your stack -> Parameters** to confirm that the r
 
 Verify that `origin` points to your own fork rather than Udacity's repository, then commit the intended project changes:
 
-```bash
+```text
+# Bash
+# Check the destination and current changes.
+git remote -v
+git status
+
+# Stage the deployment manifest updated in step 3.
+# Stage any other intended project changes explicitly too.
+git add simple_jwt_api.yml
+git commit -m "Configure the application deployment"
+# Push this fork's local master branch to the monitored remote master branch.
+git push origin master
+
+# PowerShell
 # Check the destination and current changes.
 git remote -v
 git status
@@ -5191,14 +5514,20 @@ The next section adds the automated test gate. The current buildspec installs py
 
 Confirm that the Deployment rolls out, then get the Service's external address:
 
-```bash
+```text
+# Bash
+kubectl rollout status deployment/simple-jwt-api --namespace default --timeout=180s
+kubectl get services simple-jwt-api --namespace default -o wide
+
+# PowerShell
 kubectl rollout status deployment/simple-jwt-api --namespace default --timeout=180s
 kubectl get services simple-jwt-api --namespace default -o wide
 ```
 
 The `EXTERNAL-IP` field may contain a load-balancer hostname. Wait for provisioning and DNS resolution if it is initially pending or unavailable, then set the URL with an explicit `http://` scheme for the Service's port 80:
 
-```bash
+```text
+# Bash
 BASE_URL="http://YOUR_LOAD_BALANCER_HOSTNAME"
 curl --fail-with-body --silent --show-error "$BASE_URL/"
 
@@ -5214,6 +5543,18 @@ curl --fail-with-body --silent --show-error \
   "$BASE_URL/contents" \
   --header "Authorization: Bearer ${TOKEN}" \
   | jq .
+
+# PowerShell
+$BASE_URL = 'http://YOUR_LOAD_BALANCER_HOSTNAME'
+Invoke-RestMethod -Uri "$BASE_URL/"
+
+$body = @{ email = 'abc@xyz.com'; password = 'WindowsPwd' } | ConvertTo-Json -Compress
+$auth = Invoke-RestMethod -Method Post -Uri "$BASE_URL/auth" -ContentType 'application/json' -Body $body
+$TOKEN = $auth.token
+if ([string]::IsNullOrEmpty($TOKEN)) { throw 'Response did not contain a token' }
+
+# Verify the token and return its claims.
+Invoke-RestMethod -Uri "$BASE_URL/contents" -Headers @{ Authorization = "Bearer $TOKEN" } | ConvertTo-Json
 ```
 
 Expect `"Healthy"` from the health check, a token from `/auth`, and the email plus `exp` and `nbf` claims from `/contents`. These operations sign and verify tokens; they do not encrypt and decrypt their contents.
@@ -5254,7 +5595,11 @@ post_build:
 
 Save the file, then confirm the tests pass locally from the project submodule:
 
-```bash
+```text
+# Bash
+uv run --locked python -m pytest test_main.py
+
+# PowerShell
 uv run --locked python -m pytest test_main.py
 ```
 
@@ -5283,14 +5628,24 @@ If you keep a cluster or data for another exercise, its applicable charges conti
 
 #### 1. Select the project and record retained resource names
 
-Wait for active pipeline executions and builds to finish, and avoid further pushes during cleanup. Run the following Bash blocks in the same terminal:
+Wait for active pipeline executions and builds to finish, and avoid further pushes during cleanup. Run the alternatives for your shell in the same terminal:
 
-```bash
+```text
+# Bash
 export AWS_PROFILE="deployment-course"
 export AWS_DEFAULT_REGION="eu-central-1"
 STACK_NAME="simple-jwt-api-pipeline"
 CLUSTER_NAME="simple-jwt-api"
 EKS_PROFILE="$AWS_PROFILE"
+
+aws sts get-caller-identity
+
+# PowerShell
+$env:AWS_PROFILE = "deployment-course"
+$env:AWS_DEFAULT_REGION = "eu-central-1"
+$env:STACK_NAME = "simple-jwt-api-pipeline"
+$env:CLUSTER_NAME = "simple-jwt-api"
+$env:EKS_PROFILE = "$env:AWS_PROFILE"
 
 aws sts get-caller-identity
 ```
@@ -5305,9 +5660,14 @@ Before deleting the stack, open **CloudFormation -> your stack -> Resources** an
 
 #### 2. Required: remove the pipeline stack
 
-```bash
+```text
+# Bash
 aws cloudformation delete-stack --stack-name "$STACK_NAME"
 aws cloudformation wait stack-delete-complete --stack-name "$STACK_NAME"
+
+# PowerShell
+aws cloudformation delete-stack --stack-name "$env:STACK_NAME"
+aws cloudformation wait stack-delete-complete --stack-name "$env:STACK_NAME"
 ```
 
 This removes CodePipeline, CodeBuild, the helper Lambda, and their stack-managed IAM roles, preventing further pipeline-triggered builds and deployments. If deletion fails or the wait command times out, inspect the stack's **Events** and resolve the reported issue.
@@ -5318,17 +5678,27 @@ The separately created cluster and manual IAM role remain. The template also use
 
 Refresh kubeconfig with the authorized cluster profile and verify access:
 
-```bash
+```text
+# Bash
 aws eks update-kubeconfig \
   --name "$CLUSTER_NAME" \
   --region "$AWS_DEFAULT_REGION" \
   --profile "$EKS_PROFILE"
 kubectl get services --all-namespaces
+
+# PowerShell
+aws eks update-kubeconfig  --name "$env:CLUSTER_NAME"  --region "$env:AWS_DEFAULT_REGION"  --profile "$env:EKS_PROFILE"
+kubectl get services --all-namespaces
 ```
 
 If the listing returns `Unauthorized`, correct `EKS_PROFILE` before continuing. Delete the project's Service while Kubernetes is still running so it can release the AWS load balancer, then remove the Deployment:
 
-```bash
+```text
+# Bash
+kubectl delete service simple-jwt-api --namespace default --wait=true
+kubectl delete deployment simple-jwt-api --namespace default --wait=true
+
+# PowerShell
 kubectl delete service simple-jwt-api --namespace default --wait=true
 kubectl delete deployment simple-jwt-api --namespace default --wait=true
 ```
@@ -5337,12 +5707,18 @@ Verify that the matching load balancer disappears from **EC2 -> Load Balancers**
 
 If the cluster is dedicated to this project and no longer needed:
 
-```bash
+```text
+# Bash
 AWS_PROFILE="$EKS_PROFILE" eksctl delete cluster \
   --name "$CLUSTER_NAME" \
   --region "$AWS_DEFAULT_REGION" \
   --profile "$EKS_PROFILE" \
   --wait
+
+# PowerShell
+# Use the authorized profile for all commands in this cleanup session.
+$env:AWS_PROFILE = $env:EKS_PROFILE
+eksctl delete cluster --name $env:CLUSTER_NAME --region $env:AWS_DEFAULT_REGION --profile $env:EKS_PROFILE --wait
 ```
 
 Wait for completion; repeated CloudFormation waiting messages are progress checks. Verify that the `eksctl-simple-jwt-api-*` stacks finish deleting and their EC2 instances, EBS volumes, NAT gateways, and allocated public IP addresses are released. EKS control-plane and node charges continue while those resources remain.
@@ -5362,9 +5738,14 @@ You may retain images, artifacts, or logs for reference, but their applicable st
 
 **Manual IAM role:** [IAM has no direct usage charge](https://docs.aws.amazon.com/IAM/latest/UserGuide/getting-started.html), so `UdacityFlaskDeployCBKubectlRole` and its inline policy may remain for reuse. If no other pipeline needs the role, you can remove them:
 
-```bash
+```text
+# Bash
 aws iam delete-role-policy \
   --role-name UdacityFlaskDeployCBKubectlRole --policy-name eks-describe
+aws iam delete-role --role-name UdacityFlaskDeployCBKubectlRole
+
+# PowerShell
+aws iam delete-role-policy  --role-name UdacityFlaskDeployCBKubectlRole --policy-name eks-describe
 aws iam delete-role --role-name UdacityFlaskDeployCBKubectlRole
 ```
 
@@ -5372,13 +5753,17 @@ If you remove the role but keep the cluster, first remove only its entry from `d
 
 **Standard Parameter Store parameter:** retaining a Standard `JWT_SECRET` parameter has no additional storage charge; higher-throughput API usage can still be billed. Delete it if it belongs only to this project and you no longer need it:
 
-```bash
+```text
+# Bash
+aws ssm delete-parameter --name JWT_SECRET
+
+# PowerShell
 aws ssm delete-parameter --name JWT_SECRET
 ```
 
 The same command removes an Advanced parameter from step 4. If you kept the cluster, optionally delete its unused `jwt-secret` with `kubectl delete secret jwt-secret --namespace default`.
 
-**Credentials and local resources:** revoke the exercise-only GitHub token, remove its saved value and the local `.env_file`, and discard the temporary `aws-auth` export when no longer needed. Local Docker resources do not generate AWS charges; stop and remove `myContainer` and remove `myimage` using the commands from Part 1 B if you no longer need them.
+**Credentials and local resources:** revoke the exercise-only GitHub token, remove its saved value and the local `.env`, and discard the temporary `aws-auth` export when no longer needed. Local Docker resources do not generate AWS charges; stop and remove `simple-flask-container` and remove `simple-flask-project` using the commands from Part 1 B if you no longer need them.
 
 
 ### Project Rubric
@@ -5392,7 +5777,7 @@ Use this rubric to check the required submission evidence. The optional suggesti
 | Set up a valid Dockerfile. | The Dockerfile builds successfully on the local machine using Docker. |
 | Include the correct container commands. | Install the application dependencies and run the app with a Gunicorn Web Server Gateway Interface (WSGI) server.<br>The original rubric specifies `python:stretch` as the source image.<br>Use the entry point `["gunicorn", "-b", ":8080", "main:APP"]`. |
 | Run the Docker image and verify its endpoints. | The container starts correctly, and all three endpoints respond as described in the README. |
-| Set the required environment variable. | Configure the JSON Web Token (JWT) signing secret, `JWT_SECRET`, correctly in a file such as `.env_file` and supply it to the container. |
+| Set the required environment variable. | Configure the JSON Web Token (JWT) signing secret, `JWT_SECRET`, correctly in a file such as `.env` and supply it to the container. |
 
 **Version note:** The `python:stretch` instruction above is retained from the original rubric. This guide's updated starter uses `python:3.13-slim` and uv, with the same Gunicorn entry point.
 

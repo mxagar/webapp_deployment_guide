@@ -121,7 +121,8 @@ A fresh 32-byte cryptographically random `JWT_SECRET` is saved in `udacity_serve
 From the submodule directory, pass it to Docker at runtime:
 
 ```bash
-docker run --rm --name flask-project --publish 127.0.0.1:8080:8080 --env-file .env eks-flask-project:local
+docker build -t simple-flask-project .
+docker run --rm --name simple-flask-container --publish 127.0.0.1:8080:8080 --env-file .env simple-flask-project
 ```
 
 For direct local Python execution in Bash, export it first; the application does not automatically read `.env`:
@@ -186,6 +187,14 @@ The project's request flow is:
 The claims used here are `email` (the supplied email), `exp` (expiration time), and `nbf` ("not before": when the token becomes valid). The app uses `JWT_SECRET` with HS256 to sign and verify tokens. Modifying a token's contents makes its signature invalid. The signing secret stays on the backend; the client receives only the token.
 
 JWTs commonly support authentication and API authorization. Like a temporary password, a bearer token can be used by whoever holds it until it expires, so keep it private and transmit it over HTTPS. Unlike a password, this token carries signed claims and an expiration time. **Signed does not mean encrypted**: anyone holding this JWT can read its contents, so never include passwords or other secrets in its payload.
+
+### Reusing a JWT after restarting the server
+
+**Restarting the server does not require a new JWT.** You can reuse an existing token as long as it has not expired and the server loads the same `JWT_SECRET`. This project's tokens expire two weeks after issuance.
+
+The local `.env` file preserves the signing secret between restarts, but the application does not read that file automatically: load it into the server's environment before starting Python, or pass it to Docker with `--env-file .env`. Reuse that saved secret rather than generating a new one at every startup.
+
+Changing `JWT_SECRET` invalidates tokens signed with the previous value. Request a new token from `/auth` if the old token expires or the signing secret changes. Also distinguish server restarts from closing the client terminal: closing that terminal loses its temporary `TOKEN` variable, so you would need to supply the existing token again or request a new one.
 
 ### Where the JWT is stored
 
@@ -252,11 +261,15 @@ Local API tests and Docker endpoint checks have passed, and the required buildsp
 
 ### 2. Verify tools and AWS identity
 
-```bash
-export AWS_PROFILE=deployment-course
-export AWS_DEFAULT_REGION=eu-central-1
-export CLUSTER_NAME=simple-jwt-api
-export STACK_NAME=simple-jwt-api-pipeline
+Use **PowerShell** for this step. Environment variables use the `$env:` prefix both when assigning and reading them:
+
+```powershell
+$env:AWS_PROFILE="deployment-course"
+$env:AWS_DEFAULT_REGION="eu-central-1"
+$env:CLUSTER_NAME="simple-jwt-api"
+$env:STACK_NAME="simple-jwt-api-pipeline"
+$env:PATH = 'C:\Program Files\Amazon\AWSCLIV2;' + $env:PATH
+
 aws --version
 eksctl version
 kubectl version --client
@@ -264,38 +277,39 @@ kubectl version --client
 
 If the SSO profile is absent, run the wizard once:
 
-```bash
+```powershell
 aws configure sso --profile deployment-course
 aws configure set region eu-central-1 --profile deployment-course
 ```
 
 Then authenticate and verify the intended account:
 
-```bash
-aws sso login --profile "$AWS_PROFILE"
-aws sts get-caller-identity
-aws eks describe-cluster-versions --region "$AWS_DEFAULT_REGION" --output table
+```powershell
+aws sso login --profile $env:AWS_PROFILE
+aws sts get-caller-identity --profile $env:AWS_PROFILE
+aws eks describe-cluster-versions --profile $env:AWS_PROFILE --region $env:AWS_DEFAULT_REGION --output table
 ```
 
 Record the selected account/profile/region and supported version. The identity needs permissions to create EKS, networking, EC2 nodes, IAM roles/policies, CloudFormation, CodePipeline, CodeBuild, ECR, S3, Lambda, and SSM resources. An SSO login does not itself grant these permissions. Resolve denied permissions before proceeding.
 
 ### 3. Create and verify EKS
 
-This starts chargeable AWS resources. First check whether an existing course cluster can be reused:
+Use **PowerShell**, with the profile and region set in step 2. This starts chargeable AWS resources. First check whether an existing course cluster can be reused:
 
-```bash
-aws eks list-clusters
+```powershell
+aws eks list-clusters --region $env:AWS_DEFAULT_REGION --profile $env:AWS_PROFILE
 ```
 
 For a new dedicated cluster, after verifying regional version availability:
 
-```bash
-export KUBERNETES_VERSION=1.37
-eksctl create cluster --name "$CLUSTER_NAME" --nodes 2 --version "$KUBERNETES_VERSION" --instance-types t3.medium --region "$AWS_DEFAULT_REGION" --profile "$AWS_PROFILE"
-aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_DEFAULT_REGION" --profile "$AWS_PROFILE"
+```powershell
+$env:CLUSTER_NAME = 'simple-jwt-api'
+$env:KUBERNETES_VERSION = '1.37'
+eksctl create cluster --name $env:CLUSTER_NAME --nodes 2 --version $env:KUBERNETES_VERSION --instance-types t3.medium --region $env:AWS_DEFAULT_REGION --profile $env:AWS_PROFILE
+aws eks update-kubeconfig --name $env:CLUSTER_NAME --region $env:AWS_DEFAULT_REGION --profile $env:AWS_PROFILE
 kubectl config current-context
 kubectl get nodes
-aws eks describe-cluster --name "$CLUSTER_NAME" --query 'cluster.{version:version,authenticationMode:accessConfig.authenticationMode}' --output table
+aws eks describe-cluster --name $env:CLUSTER_NAME --region $env:AWS_DEFAULT_REGION --profile $env:AWS_PROFILE --query 'cluster.{version:version,authenticationMode:accessConfig.authenticationMode}' --output table
 ```
 
 Record completion, authentication mode, and two Ready nodes. Use an identity already authorized for Kubernetes administration. The assignment's `aws-auth` method needs `CONFIG_MAP` or `API_AND_CONFIG_MAP`; confirm that before configuring access. An API-only cluster uses access entries instead. Keep local and CodeBuild kubectl within one minor version of the control plane.
@@ -535,6 +549,63 @@ Local secret persistence (2026-11-09, assistant): checked `.env` absence with `T
 The user requested pushing the project submodule changes. Inspection found they had already been committed as `ba5983b8d7e1b61247c2d851cd94578d21d45778` (three configuration files only) in detached HEAD; no additional commit was needed. `.env` remains ignored and untracked. The assistant checked `git status --short`, `git remote -v`, `git branch -avv`, `git diff --check`, `git diff --stat`, `git check-ignore .env`, `git ls-files .env`, `git show --stat --oneline HEAD`, and the commit diff. Ran `git fetch origin master` successfully, then checked ancestry with `git merge-base --is-ancestor origin/master HEAD` and `git merge-base --is-ancestor master HEAD`. Next: fast-forward local `master`, push normally, and verify the remote commit. The initial implementation's statements that changes were uncommitted describe its earlier state, before this existing commit was observed.
 
 Publishing result (2026-11-09, assistant): successfully ran `git switch master`, `git merge --ff-only ba5983b8d7e1b61247c2d851cd94578d21d45778`, and `git push origin master`. GitHub advanced `master` from `52ce056` to `ba5983b`. Verified with `git ls-remote origin refs/heads/master`: remote commit is `ba5983b8d7e1b61247c2d851cd94578d21d45778`. Final `git status --short` is empty, `git branch --show-current` is `master`, `git check-ignore .env` confirms exclusion, and `git ls-files .env` is empty. The parent README update and any parent submodule-pointer change were not committed or pushed by this action. The user's checklist step 1 (publishing the configuration) is now complete; proceed to tool verification and AWS sign-in.
+
+AWS CLI troubleshooting (2026-11-09, user and assistant): user reported `aws --version` failing in the Poetry `quality-bot` environment with missing `awscli`. Assistant used the systematic-debugging workflow; ran `Get-Command aws -All`, `where.exe aws`, `Test-Path 'C:/Program Files/Amazon/AWSCLIV2/aws.exe'`, and `Get-Command winget` to inspect resolution and available tooling. Consulted official AWS CLI installation/troubleshooting documentation. Ran `& 'C:/Program Files/Amazon/AWSCLIV2/aws.exe' --version` successfully, then temporarily prepended its directory to PATH in the assistant's PowerShell process and verified `aws --version` and `(Get-Command aws).Source`: AWS CLI 2.27.22 from the standalone installation. Documented Bash/PowerShell commands above for the user's separate terminal; their application there remains pending. Ran `git diff --check` after updating this README. No AWS account calls, installations, or persistent environment changes were made.
+
+Region-variable troubleshooting (2026-11-09, user and assistant): user ran `aws eks describe-cluster-versions --region "$AWS_DEFAULT_REGION" --output table`; CLI argument parsing failed with `--region: expected one argument`, before a service request. Assistant documented setting/exporting the profile and region in the current shell, displaying their non-secret values, and retrying; also provided an explicit profile/region alternative and PowerShell syntax. Retry and regional version results remain pending user execution. README edited with `apply_patch` and checked using `git diff --check`.
+
+PowerShell correction (2026-11-09, assistant, requested by user): read the current step 2 and corrected its mixed Bash/PowerShell block to PowerShell only. Updated SSO login, STS identity, and EKS version commands to use `$env:AWS_PROFILE` and `$env:AWS_DEFAULT_REGION`; corrected the region troubleshooting section and its earlier incorrect inference about the user's shell. Documented the shell scope of these assignments. Updated using `apply_patch` and verified documentation formatting with `git diff --check`; no AWS commands were executed.
+
+Section 3 PowerShell conversion (2026-11-09, assistant): inspected the current EKS section using `Get-Content` and `rg`, then used `apply_patch` to convert its fenced commands and environment-variable references to PowerShell. Set the cluster name and version with `$env:` and made profile/region explicit in AWS calls. Verified the documentation with `git diff --check`. Commands are instructions only; no EKS resources were created or queried during this edit.
+
+Dual-shell course instructions (2026-11-11, assistant): at the user's request, updated all 53 Bash command blocks within `../README.md`'s “Project: Deploy Your Flask App to Kubernetes Using EKS” section. Each mixed `text` block now contains `# Bash` followed by the original commands, then `# PowerShell` with equivalent commands. Added guidance to run only one alternative. Converted environment variables, inline assignments, line continuations, HTTP/JSON requests, temporary paths, secret cleanup, and UTF-8 file writing where needed. PowerShell HTTP examples use `Invoke-RestMethod`; buildspec/Dockerfile/YAML/JSON/Python syntax remains unchanged.
+
+Documentation-edit commands: inspected repository guidance/status with `rg --files --hidden -g AGENTS.md`, `git status --short`, `git diff --stat`, and scoped `rg`/`Get-Content` reads; extracted the section's Bash fences using PowerShell regular expressions. Used a temporary `.tmp_convert_project_shells.py` helper, created with `apply_patch` and run via `python .tmp_convert_project_shells.py`, to apply the conversions. The helper asserted that all 53 original Bash alternatives and all text before the project section were preserved. Then used `[System.Management.Automation.Language.Parser]::ParseInput` on every PowerShell alternative: all 53 parsed without errors; a scan found no remaining Bash `export`, `unset`, `printf`, or backslash continuation syntax in those alternatives. Ran `git diff --check` successfully (only Git's existing line-ending conversion warnings), reviewed the diff, and removed the temporary helper with `apply_patch`. Existing user edits in both README files were retained. This session changed documentation only; no AWS, EKS, Docker, application, commit, or push operations were performed.
+
+Optional jq installation failure (2026-11-11, user and assistant): user ran `choco install jq` in a non-elevated Windows shell, accepted the continuation prompt, and reported failure installing jq 1.8.2. Chocolatey could not access its package lock or create `C:\ProgramData\chocolatey\lib-bad`; installation did not succeed. The supplied output establishes filesystem permission failures but does not prove an abandoned lock. Assistant inspected the endpoint instructions with `rg`/`Get-Content`, clarified in the course README that jq is unnecessary for the PowerShell alternatives, removed the PowerShell installation command, and explained `$auth.token` extraction. User can continue directly to Part 1 A step 5 using PowerShell's `Invoke-RestMethod` and `ConvertTo-Json`. Changes applied using `apply_patch` and checked with `git diff --check`. No installation retry, lock deletion, system permission changes, or AWS operations were performed.
+
+Optional Windows jq installation instructions (2026-11-11, assistant): user asked how to install jq on Windows despite its being optional for these PowerShell examples. Checked `Get-Command winget` (available) and the [official jq download instructions](https://jqlang.org/download/). Suggested the following PowerShell commands; these are planned user actions, not executed installations:
+
+```powershell
+winget install --id jqlang.jq --exact --source winget
+# Close and reopen PowerShell after installation, then verify:
+jq --version
+```
+
+Alternatively, open PowerShell with **Run as Administrator** and run `choco install jq -y`, then verify `jq --version` in a new terminal. This addresses the earlier non-elevated permission failure; a continuing lock error requires further diagnosis rather than deleting the lock blindly. No package installation or system changes were performed by the assistant. Added these instructions using `apply_patch` and checked formatting with `git diff --check`.
+
+Windows jq installation result (2026-11-11, user-reported): `winget install jqlang.jq` successfully installed jq 1.8.2, verified the downloaded executable's hash, added the `jq` command alias, and reported a PATH update requiring a shell restart. The user immediately ran `jq --version` in the same PowerShell session and received `CommandNotFoundException`; verification has not yet succeeded because that session still has its previous PATH. Next: close and reopen the terminal (restart the host application too if its integrated terminal still inherits an old PATH), then run `jq --version`. Alternatively, append the saved user PATH to the current process with `$env:Path += ';' + [Environment]::GetEnvironmentVariable('Path', 'User')` and retry. No reinstall is needed based on the reported output. Assistant recorded the result using `apply_patch` and checked documentation with `git diff --check`; did not run an installation or modify the system PATH.
+
+Local API connection troubleshooting (2026-11-11, user and assistant): user reported `Invoke-RestMethod` to `http://127.0.0.1:8080/auth` failing with “Unable to connect to the remote server”. Assistant checked listening ports with `Get-NetTCPConnection -State Listen` filtered to 80/8080/18080 (no listeners returned), inspected available `docker`/`uv` commands and local `.env`/`.venv`/`main.py` presence without reading secret values into output, and confirmed `main.py` starts Flask on 127.0.0.1:8080. `docker ps --format '{{.Names}} {{.Ports}} {{.Status}}'` failed because the Docker Desktop Linux engine pipe was absent. Added PowerShell instructions to the course's Part 1 A step 5: start Flask in terminal 1 with the saved `.env` secret, leave it running, then verify health and issue requests in terminal 2. Also clarified the container's host port 80 and same-machine localhost requirement. Used `apply_patch` and `git diff --check` for documentation; no server or Docker engine was started, and no AWS actions were performed. User startup/retry results remain pending.
+
+Local API connection cause confirmed (2026-11-11, user-reported): user confirmed the Flask server had not been started when `/auth` was requested. Start it in terminal 1 and leave it running, then retry the health/auth workflow in terminal 2. Successful startup and endpoint responses have not yet been reported for this attempt. Assistant recorded this clarification using `apply_patch`; no commands or services were started.
+
+JWT reuse remark (2026-11-11, assistant): at the user's request, inspected the JWT/local-secret sections with `rg`, then added the server-restart explanation using `apply_patch`: unexpired tokens remain valid with the same signing secret, this starter uses a two-week lifetime, `.env` must be loaded explicitly, and closing the client shell loses its temporary token variable. Checked formatting with `git diff --check`. Documentation only; no tokens, secrets, servers, or AWS resources were changed.
+
+JWT remark location clarification (2026-11-11, assistant): user reported the remark was not visible. Verified with `rg` that it existed under “Reusing a JWT after restarting the server” in this project README, then also placed the explanation beside the environment/server-start instructions in `../README.md`, the course project section. Clarified that random secret generation is initial setup and that subsequent starts should load the saved `.env` value. Updated using `apply_patch` and checked with `git diff --check`; documentation only.
+
+Environment filename clarification (2026-11-11, user and assistant): user confirmed the local environment file is `.env`. Assistant located filename references using `rg`, then used a scoped PowerShell text replacement to change the course project section's environment-file creation examples, Git-ignore checks, Docker `--env-file` arguments, cleanup guidance, and rubric example to `.env`. Added a warning to skip initial file creation when `.env` already holds the signing secret. This project README already used `.env`. Verified with `rg` and `git diff --check`. Documentation only; no environment file or secret was read, overwritten, renamed, or rotated.
+
+Descriptive local Docker image name (2026-11-11, assistant): user proposed `simple-flask-project` instead of `myimage`. Inspected references with `rg`, then updated the course project section's Bash/PowerShell build and run commands, accompanying explanation, and cleanup reference using a scoped PowerShell replacement. Updated this README's active local build/run example with `apply_patch`. Historical verification logs retain the actual `eks-flask-project:local` name used during that earlier session. Checked with `git diff --check`. Documentation only; no Docker images were built, retagged, or removed.
+
+Descriptive local Docker container name (2026-11-11, assistant): at the user's request, located references with `rg` and replaced `myContainer` with `simple-flask-container` within the course project section, including Bash/PowerShell run, stop, remove, and cleanup examples. Updated this README's active Docker run example from `flask-project` to the same container name using `apply_patch`. Earlier unrelated course examples and historical execution logs were preserved. Checked formatting with `git diff --check`. Documentation only; no running container was renamed or changed.
+
+Docker quoted log-level failure and recovery (2026-11-11, user and assistant): user ran `docker run --name simple-flask-container --env-file=.env -p 127.0.0.1:80:8080 simple-flask-project`; Gunicorn exited because Python logging received literal quote characters in `LOG_LEVEL` (`ValueError: Unknown level: '"DEBUG"'`). Assistant inspected only the `LOG_LEVEL` line via `Get-Content .../.env | Where-Object { $_ -match '^\s*LOG_LEVEL\s*=' }` and checked submodule status. Initial `docker inspect --format '{{.State.Status}} {{.State.ExitCode}} {{json .Mounts}}' simple-flask-container` was sandbox-blocked; approved retry showed `exited 3 []`. An attempted narrowly scoped `.env` correction aborted without writing because the quoted line no longer matched. Reinspection, including the log-level line's character codes, confirmed it had already become `LOG_LEVEL=DEBUG`; the assistant did not write the file or change the signing secret.
+
+After verifying again that the named container was stopped, the assistant successfully executed from the submodule directory:
+
+```powershell
+docker rm simple-flask-container
+docker run --detach --name simple-flask-container --env-file .env -p 127.0.0.1:80:8080 simple-flask-project
+```
+
+New container ID: `e9381df6c866374900629108555aea670fcf86db221886a87721bdcf21b81bc5`. Verified health with `Invoke-RestMethod -Uri 'http://127.0.0.1:80/'`, issued a token via `Invoke-RestMethod -Method Post` with a JSON test body, and used that token in the Authorization header to verify `/contents`; all passed and neither token nor signing secret was displayed. Then ran `docker inspect --format '{{.State.Status}}' simple-flask-container` and `docker logs --tail 8 simple-flask-container`: state `running`, successful worker startup, and application DEBUG logging confirmed. Container remains running in the background on host port 80. Added the quoting/recreation explanation to the course README with `apply_patch` and checked documentation using `git diff --check`. No rebuild, application-code changes, or AWS operations were needed.
+
+README visibility check (2026-11-11, assistant): user could not see the edits. Used `Get-Location`, scoped `rg`, `Get-Item`, and `git status --short` to verify the saved course README contains the Docker quoting explanation at line 4757 and this project README contains the recovery log at line 593. Also searched through the user's `C:/Users/A200239740/git_repositories/webapp_deployment_guide` path and confirmed the same passages are visible there; `git rev-parse --show-toplevel` resolved to the E: workspace. Both README changes remain local and uncommitted. The README inside the forked submodule is a separate file and was not the destination of these documentation edits.
+
+Existing container name conflict (2026-11-11, user and assistant): user repeated `docker run --name simple-flask-container --env-file=.env -p 127.0.0.1:80:8080 simple-flask-project`; Docker rejected it because container `e9381df6c866374900629108555aea670fcf86db221886a87721bdcf21b81bc5` from the preceding recovery already exists. Assistant ran `docker ps -a --filter name=^/simple-flask-container$ --format '{{.Names}} {{.Status}} {{.Ports}}'`; sandbox pipe access was denied, so an approved read-only retry confirmed it was running with `127.0.0.1:80->8080/tcp`. `Invoke-RestMethod -Uri 'http://127.0.0.1:80/' -TimeoutSec 5` returned `Healthy`. Existing container can be used directly; nothing was stopped, removed, or recreated. Added the distinction between Docker run/start and existing running containers to the course README with `apply_patch`; verified formatting using `git diff --check`.
+
+Pipeline overview simplification (2026-11-11, assistant): at the user's request, inspected Part 2 A and its table-of-contents entries with `rg`, then rewrote the overview as eight concise bullets without subsections. Preserved its runtime/dependency context, regional constraint, IAM policy files and trust relationship, Kubernetes RBAC mapping, GitHub token parameters, CloudFormation/buildspec links, separate secret delivery, deployment flow, and pytest publication/deployment gate. Explicitly identified Parts 2 B–D as the successive implementation sections and removed the three obsolete subsection links from the table of contents. Applied with `apply_patch`; verified using a scoped section check and `git diff --check`. Documentation only; no implementation or AWS commands were run.
 
 For future entries, use: date/time (Europe/Budapest), actor, exact sanitized command or console action, result, verification/evidence, and next action. Include unsuccessful attempts and their resolution.
 
