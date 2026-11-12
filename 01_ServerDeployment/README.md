@@ -4333,9 +4333,9 @@ Have the following tools and accounts ready:
 
 ##### Python and package management
 
-**Recommended: Python 3.13, using the latest available 3.13 patch release.** It matches this guide's existing [course environment](./pyproject.toml), which requires `>=3.13,<3.14`, and has [security support through October 2029](https://devguide.python.org/versions/). Use the same Python minor version locally, in the Docker image, and in CodeBuild.
+**Host development and CodeBuild: Python 3.13. Rubric-compatible Docker runtime: Python 3.7.4 from `python:stretch`.** The 2026-11-12 resubmission adopts the literal historical image and pip/requirements installation at the user's request. Pinned dependencies support both environments, and CodeBuild runs tests in the actual Stretch container as well as on the host. Stretch/Python 3.7 are end-of-life and used here only for this course compatibility exercise.
 
-The project starter has been updated from the course's Python 3.7–3.9 setup to Python 3.13, current Flask/PyJWT APIs, and uv. Its local environment, Docker image, and CodeBuild runtime use the same Python minor version.
+Host setup still uses uv and the committed lockfile. Docker now installs the exported `requirements.txt` with pip; `requirements-dev.txt` adds the tools for runtime tests. The API uses timezone-aware code compatible with Python 3.7 and later.
 
 Check the selected interpreter:
 
@@ -4359,7 +4359,7 @@ uv python install 3.13
 uv sync --locked
 ```
 
-Dependencies are declared in `pyproject.toml` and fixed in `uv.lock`; the old `requirements.txt` and pip setup have been replaced. The local-running section below provides the full workflow.
+Dependencies are declared in `pyproject.toml` and fixed in `uv.lock`; committed `requirements.txt` and `requirements-dev.txt` exports support the rubric's pip workflow. The local-running section below provides the full workflow.
 
 ##### Terminal and AWS tools
 
@@ -4498,7 +4498,7 @@ uv sync --locked
 uv run --locked python --version
 ```
 
-Use [uv](https://docs.astral.sh/uv/getting-started/installation/) 0.13.7 or newer. The project targets Python 3.13; its `pyproject.toml` declares Flask 3.1.3, PyJWT 2.15.1, Gunicorn 26.2.0, and pytest 9.2.0 as minimum versions within their supported major versions. The committed `uv.lock` fixes the exact dependency versions.
+Use [uv](https://docs.astral.sh/uv/getting-started/installation/) 0.13.7 or newer. Host tooling uses Python 3.13; the Docker image uses Python 3.7.4. The project pins Flask 2.2.5, PyJWT 2.8.0, Gunicorn 23.0.0, pytest 7.4.4, and compatible transitive dependencies. `uv.lock` and the exported requirements files record these versions.
 
 `uv sync --locked` creates the submodule's `.venv` and installs its runtime and development dependencies. Run the remaining `uv` commands from this directory; no manual environment activation is needed. After an intentional dependency change, regenerate the lockfile with `uv lock` and commit it together with `pyproject.toml`.
 
@@ -4699,33 +4699,30 @@ Package the application tested in Part 1 A as a Docker image, run it with Gunico
 
 #### 1. Verify the Dockerfile
 
-The [project Dockerfile](./project/udacity_server_deployment_exercises_cd0157/Dockerfile) uses the same Python 3.13 and uv dependency setup as the local environment:
+The [project Dockerfile](./project/udacity_server_deployment_exercises_cd0157/Dockerfile) now matches the literal historical rubric: `python:stretch`, pip installation from `requirements.txt`, and the required Gunicorn entry point:
 
 ```dockerfile
-# Use the same Python 3.13 runtime as the local environment and CodeBuild.
-FROM python:3.13-slim
+# Literal historical course rubric. This tag contains Python 3.7.4 on Debian Stretch.
+# Use for this compatibility exercise; the OS and Python runtime are end-of-life.
+FROM python:stretch
 
-# Copy the pinned uv executable into the image.
-COPY --from=ghcr.io/astral-sh/uv:0.13.7 /uv /usr/local/bin/uv
-# Disable bytecode files, stream logs immediately, and use the image's Python and project environment.
+# Disable bytecode files and stream logs immediately.
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    UV_PYTHON_DOWNLOADS=never \
-    PATH="/app/.venv/bin:$PATH"
+    PYTHONUNBUFFERED=1
 
-# Set up an app directory for the code and install locked runtime dependencies.
 WORKDIR /app
-COPY pyproject.toml uv.lock ./
-RUN uv sync --locked --no-dev --no-cache
-# Copy the application after dependencies so code changes can reuse their cached layer.
+# pip 24.0 supports Python 3.7; requirements.txt pins compatible application dependencies.
+COPY requirements.txt ./
+RUN python -m pip install --no-cache-dir pip==24.0 \
+    && python -m pip install --no-cache-dir -r requirements.txt
 COPY main.py .
 
-# Run the Flask application with the Gunicorn WSGI server on container port 8080.
+# Keep the rubric's exact Gunicorn entry point.
 ENTRYPOINT ["gunicorn", "-b", ":8080", "main:APP"]
 ```
 
-- `uv sync --locked --no-dev --no-cache` installs the exact runtime dependencies from `uv.lock`, excluding development tools such as pytest.
-- The project environment's `bin` directory is added to `PATH`, so the entry point finds its installed Gunicorn executable.
+- `python -m pip install --no-cache-dir -r requirements.txt` installs pinned Python 3.7-compatible runtime dependencies. pip 24.0 is used because it supports Python 3.7.
+- Gunicorn is installed into the image's Python environment; no uv executable or development tools are copied into the runtime image.
 - `main:APP` loads `APP` from `main.py`; `-b :8080` makes the Web Server Gateway Interface (WSGI) server listen on container port `8080`.
 - The existing `.dockerignore` excludes the host's `.venv`, Git metadata, caches, and `.env*` files from the build context.
 
@@ -4733,7 +4730,7 @@ The original course used an Amazon Elastic Container Registry (ECR) Public build
 
 #### 2. Store the container's environment settings
 
-Containers do not automatically inherit your terminal's environment variables. Create `.env` in the project directory so Docker can pass `JWT_SECRET` and `LOG_LEVEL` to the application at startup.
+Containers do not automatically inherit your terminal's environment variables. The submitted [.env.example](./project/udacity_server_deployment_exercises_cd0157/.env.example) supplies the file-based template; create a private `.env` with your own secret. Docker passes its `JWT_SECRET` and `LOG_LEVEL` values at startup. Preserve an existing `.env` instead of regenerating its signing secret. Missing or empty `JWT_SECRET` now prevents startup with a clear error.
 
 Generate the secret and write the file:
 
@@ -5493,7 +5490,7 @@ The left-hand `JWT_SECRET` is the build environment variable; the right-hand val
 
 - **`install`:** Starts Docker, selects Python 3.13, downloads and checksum-verifies kubectl, updates `PATH`, installs uv 0.13.7 and jq, and checks the AWS CLI v2 already supplied by the build image. AWS CLI v2 provides EKS token authentication, replacing the video's separate `aws-iam-authenticator` download.
 - **`pre_build`:** Generates an image tag, substitutes it for `CONTAINER_IMAGE` in the manifest, logs Docker into ECR with `get-login-password`, sets `KUBECONFIG`, and runs `uv sync --locked`.
-- **`build`:** Builds the application image from the Python 3.13 Dockerfile and its locked runtime dependencies.
+- **`build`:** Builds the rubric-compatible Stretch image with pip and pinned requirements, then runs all 14 tests inside a disposable container using that actual Python 3.7.4 image. Test dependencies are not added to the published runtime image.
 - **`post_build`:** Pushes the image to ECR, updates kubeconfig using the deployment role, applies `simple_jwt_api.yml`, and writes `build.json` as the output artifact.
 
 CodeBuild logs show these commands in execution order. Keep the explanatory comments and diagnostic `echo` statements: version and path output help connect a logged failure to its buildspec command. Avoid echoing secret values.
@@ -5710,10 +5707,12 @@ Finish with passing tests in the submitted repository. The intentional failure i
 
 Submit the implementation, its live API address, and enough evidence for a reviewer to check every [rubric criterion](#project-rubric). The checklist below is based on this project's instructions; use the repository-link or upload format actually offered by your course's submission page.
 
+**Prepared 2026-11-12 resubmission:** [download the source ZIP](./project/submission-2026-11-12.zip). It includes the literal Stretch/pip Docker implementation, `.env.example`, reviewer notes, and fresh successful deployment evidence. The private `.env` is excluded. The published source/evidence commit is `3bd35dd0bfafe96b92a79f3cc899d1f9425bd9c8`; verified application commit `4d4fe962a89eb097f4ef0406a26d81e3b8ee4e47` passed 14 host and 14 actual-runtime tests. A recording is not a criterion in the rubric reproduced below; no video timestamps are claimed.
+
 #### 1. Prepare the handoff
 
-- **Source code:** provide the [forked project repository](https://github.com/mxagar/udacity_server_deployment_exercises_cd0157), branch `master`, and the reviewed/deployed commit. The completed Part 2 D run deployed [`7c9bf6e79b512fe32ccd2cf5e187e2d6f92b9f34`](https://github.com/mxagar/udacity_server_deployment_exercises_cd0157/commit/7c9bf6e79b512fe32ccd2cf5e187e2d6f92b9f34). If you make later changes, record the new commit and its verification results.
-- **Implementation files:** include `main.py`, `test_main.py`, `Dockerfile`, `.dockerignore`, `pyproject.toml`, `uv.lock`, `.python-version`, `buildspec.yml`, `simple_jwt_api.yml`, `ci-cd-codepipeline.cfn.yml`, the IAM/access-policy examples, and the project README. The fork contains these at its root.
+- **Source code:** provide the [forked project repository](https://github.com/mxagar/udacity_server_deployment_exercises_cd0157), branch `master`, and the reviewed/deployed commit. The verified 2026-11-12 resubmission deployed [`4d4fe962a89eb097f4ef0406a26d81e3b8ee4e47`](https://github.com/mxagar/udacity_server_deployment_exercises_cd0157/commit/4d4fe962a89eb097f4ef0406a26d81e3b8ee4e47). If you make later changes, record the new commit and its verification results.
+- **Implementation files:** include `main.py`, `test_main.py`, `Dockerfile`, `.dockerignore`, `.env.example`, `requirements.txt`, `requirements-dev.txt`, `pyproject.toml`, `uv.lock`, `.python-version`, `buildspec.yml`, `simple_jwt_api.yml`, `ci-cd-codepipeline.cfn.yml`, the IAM/access-policy examples, and the project README. The fork contains these at its root.
 - **Documentation and evidence:** the user moved the three snapshots into the fork's `evidence/` directory. Include [SUBMISSION.md](./project/udacity_server_deployment_exercises_cd0157/SUBMISSION.md), [baseline.json](./project/udacity_server_deployment_exercises_cd0157/evidence/baseline.json), [failed-run.json](./project/udacity_server_deployment_exercises_cd0157/evidence/failed-run.json), and [restored-run.json](./project/udacity_server_deployment_exercises_cd0157/evidence/restored-run.json) with the fork, plus any requested screenshots or terminal logs. The fuller [project README activity log](./project/README.md) remains in the parent guide and can be attached separately. Commit/push the in-fork submission notes and evidence so reviewers can access them remotely.
 - **If submitting a ZIP:** package the actual fork source files and the evidence/documentation together. A ZIP of the parent guide alone does not automatically include its submodule contents. Exclude `.git`, `.venv`, caches, `.env`, GitHub tokens, signing secrets, and raw Kubernetes Secret exports. Retain lockfiles and `.dockerignore`.
 - **Access:** confirm the reviewer can open the repository and evidence links. If using private repositories, follow the course's reviewer-access process. Provide the API URL and test instructions; AWS credentials, console access, and the JWT signing secret are not part of the handoff.
@@ -5738,12 +5737,12 @@ The [project README's reviewer evidence](./project/README.md#reviewer-evidence) 
 
 #### 3. Explain differences from the original course
 
-Be explicit about the historical rubric wording and the implemented replacement. An explanation does not itself waive a rubric requirement; flag the base-image difference for the reviewer and follow any course instruction requiring the original image.
+The 2026-11-12 resubmission now matches the literal Docker base-image and requirements-installation instructions. Explain that correction and distinguish the remaining tooling/configuration choices from rubric deviations. Preserve the original 2026-11-11 evidence as dated history and include the fresh resubmission results.
 
 | Difference | Reviewer note and retained behavior |
 | --- | --- |
-| **Explicit rubric mismatch: `python:stretch` → `python:3.13-slim`** | The original rubric names `python:stretch`; this project intentionally uses the guide's updated Python 3.13 image. Dependencies install successfully, Gunicorn still loads `main:APP` on port 8080 with the exact required entry point, and local/cloud endpoint checks passed. Request review of this declared version substitution. |
-| Older Python/pip/`requirements.txt` workflow → Python 3.13 and uv | Dependencies are declared in `pyproject.toml` and fixed in `uv.lock`; Docker installs runtime dependencies with `uv sync --locked --no-dev`, while CodeBuild includes pytest and runs `uv run --locked python -m pytest test_main.py`. These commands preserve dependency installation and automated testing. |
+| **Resolved Docker mismatch** | The resubmission now literally uses `FROM python:stretch`, pip installation from `requirements.txt`, and the exact Gunicorn entry point. The earlier `python:3.13-slim` exception no longer applies. |
+| Requirements and host tooling | Docker uses Python 3.7.4 and pip with exported, pinned requirements. Python 3.13/uv remains the host tooling; CodeBuild tests both host and container runtimes before publication. |
 | Older JWT/library examples → current Flask/PyJWT APIs | Token encoding returns a string; the obsolete `.decode('utf-8')` is removed. HS256 signing/verification and the required endpoint contract remain intact. |
 | Historical AWS/Kubernetes tools and region → current project settings | EKS 1.37, kubectl 1.37.2, Python 3.13, CodeBuild `standard:8.0`, and AWS CLI v2 are used in `eu-central-1`. CLI v2 supplies EKS authentication and ECR login. These are compatibility/configuration updates to the same GitHub → CodePipeline → CodeBuild → ECR → EKS workflow. |
 | Local names and terminal examples | `.env`, image `simple-flask-project`, and container `simple-flask-container` replace illustrative names. Bash and PowerShell alternatives perform the same steps; these naming choices do not change the endpoint or deployment behavior. |
@@ -5752,13 +5751,13 @@ Also describe the implementation additions: the Kubernetes Secret reference supp
 
 #### 4. Add reviewer notes
 
-Paste a note like the following into the submission comments or include it as `SUBMISSION.md` with the handoff. This is a template populated from the verified 2026-11-11 run; update it if the commit, deployment, or evidence changes:
+Paste a note like the following into the submission comments or include it as `SUBMISSION.md` with the handoff. This is a template populated from the verified 2026-11-12 resubmission; update it if the commit, deployment, or evidence changes:
 
 ```markdown
 Project: Deploy Your Flask App to Kubernetes Using EKS
 Repository: https://github.com/mxagar/udacity_server_deployment_exercises_cd0157
 Branch: master
-Verified/deployed commit: 7c9bf6e79b512fe32ccd2cf5e187e2d6f92b9f34
+Verified/deployed commit: 4d4fe962a89eb097f4ef0406a26d81e3b8ee4e47
 Region: eu-central-1
 API base URL: http://a801c89a3b3334c9aa490f41d56834f7-6753305.eu-central-1.elb.amazonaws.com
 
@@ -5768,21 +5767,21 @@ Review steps:
 - GET /contents with Authorization: Bearer <that token> returns email, exp, and nbf.
 - Missing/invalid tokens return 401. You can generate your own test token; no signing secret is needed.
 
-Declared rubric difference:
-- python:3.13-slim replaces the historical python:stretch requirement.
+Rubric alignment after review:
+- Docker now uses the literal python:stretch base and pip install from requirements.txt.
 - The exact Gunicorn entry point and port 8080 are preserved.
-- Please evaluate this documented image-version substitution against the original rubric.
+- .env.example documents the local configuration; the real .env is private.
 
-Other updates: Python 3.13/uv/uv.lock replace the old pip requirements workflow;
-current Flask/PyJWT APIs, AWS CLI v2, EKS 1.37, and kubectl 1.37.2 are used.
+Other updates: Python 3.13/uv/uv.lock are used for host tooling; exported requirements
+are compatible with the Docker image's Python 3.7.4. AWS CLI v2, EKS 1.37, and kubectl 1.37.2 are used.
 Local names are .env, simple-flask-project, and simple-flask-container.
 
 Test-gate evidence:
 - Intentional-failure commit: d01c8400093f7a11ba43112d6b20ee62eca91dc5
 - Failed pipeline execution: 8dfc1287-f54e-4bce-af0d-63ebe861a0fd
-- Corrected successful execution: b3de9dbe-67cb-4e3f-89bd-4580d985e652
-- Final CodeBuild run: simple-jwt-api-pipeline:98bb9388-2e29-4b3c-a0f9-7ed56e4f0e65
-- Final result: 11 tests passed, successful rollout, three updated/ready replicas.
+- Corrected successful execution: 89cb1262-70a2-42ca-bb1d-be7366e08f92
+- Final CodeBuild run: simple-jwt-api-pipeline:46c4b34e-2c97-4331-a85a-b6a925a2c0bc
+- Final result: 14 host and 14 Stretch-runtime tests passed, successful rollout, three updated/ready replicas.
 - Failure evidence shows no new ECR tag or deployment update; the temporary assertion is removed.
 
 Evidence included: project README, baseline.json, failed-run.json, restored-run.json,
@@ -5960,7 +5959,7 @@ Use this rubric to check the required submission evidence. The optional suggesti
 | Run the Docker image and verify its endpoints. | The container starts correctly, and all three endpoints respond as described in the README. |
 | Set the required environment variable. | Configure the JSON Web Token (JWT) signing secret, `JWT_SECRET`, correctly in a file such as `.env` and supply it to the container. |
 
-**Version note:** The `python:stretch` instruction above is retained from the original rubric. This guide's updated starter uses `python:3.13-slim` and uv, with the same Gunicorn entry point.
+**Resubmission note (2026-11-12):** the project now literally uses `python:stretch` and pip installation from `requirements.txt`, preserving the exact Gunicorn entry point. The prior modern-base-image exception is resolved. Host tooling remains Python 3.13/uv, and CodeBuild also tests the actual Python 3.7.4 runtime image.
 
 #### Using CodePipeline and CodeBuild to Deploy
 
