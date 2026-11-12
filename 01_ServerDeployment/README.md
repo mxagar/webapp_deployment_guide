@@ -4333,9 +4333,9 @@ Have the following tools and accounts ready:
 
 ##### Python and package management
 
-**Host development and CodeBuild: Python 3.13. Rubric-compatible Docker runtime: Python 3.7.4 from `python:stretch`.** The 2026-11-12 resubmission adopts the literal historical image and pip/requirements installation at the user's request. Pinned dependencies support both environments, and CodeBuild runs tests in the actual Stretch container as well as on the host. Stretch/Python 3.7 are end-of-life and used here only for this course compatibility exercise.
+**Python 3.13 and uv are used locally, in Docker, and in CodeBuild.** After the submission passed on 2026-11-12, the owner requested restoration of the modern runtime and uv-only dependency management. The accepted legacy source commits and evidence remain available as historical records. The [new verification](./project/udacity_server_deployment_exercises_cd0157/evidence/python313-uv-2026-11-12.json) records the successful modern deployment, 14 host and 14 container tests, three ready replicas, and live API checks.
 
-Host setup still uses uv and the committed lockfile. Docker now installs the exported `requirements.txt` with pip; `requirements-dev.txt` adds the tools for runtime tests. The API uses timezone-aware code compatible with Python 3.7 and later.
+`pyproject.toml` declares the dependencies and `uv.lock` pins their versions. `uv sync --locked` installs development dependencies; the Docker build uses `--no-dev` for runtime dependencies only. No requirements exports or pip installation steps are needed.
 
 Check the selected interpreter:
 
@@ -4359,7 +4359,7 @@ uv python install 3.13
 uv sync --locked
 ```
 
-Dependencies are declared in `pyproject.toml` and fixed in `uv.lock`; committed `requirements.txt` and `requirements-dev.txt` exports support the rubric's pip workflow. The local-running section below provides the full workflow.
+Dependencies are declared in `pyproject.toml` and fixed in `uv.lock`. Commit both files after an intentional dependency change. The local-running section below provides the full workflow.
 
 ##### Terminal and AWS tools
 
@@ -4498,7 +4498,7 @@ uv sync --locked
 uv run --locked python --version
 ```
 
-Use [uv](https://docs.astral.sh/uv/getting-started/installation/) 0.13.7 or newer. Host tooling uses Python 3.13; the Docker image uses Python 3.7.4. The project pins Flask 2.2.5, PyJWT 2.8.0, Gunicorn 23.0.0, pytest 7.4.4, and compatible transitive dependencies. `uv.lock` and the exported requirements files record these versions.
+Use [uv](https://docs.astral.sh/uv/getting-started/installation/) 0.13.7 or newer. All environments use Python 3.13. The lockfile records Flask 3.1.3, PyJWT 2.15.1, Gunicorn 26.2.0, pytest 9.2.0, and their transitive dependencies. uv is the only Python dependency manager used by the project.
 
 `uv sync --locked` creates the submodule's `.venv` and installs its runtime and development dependencies. Run the remaining `uv` commands from this directory; no manual environment activation is needed. After an intentional dependency change, regenerate the lockfile with `uv lock` and commit it together with `pyproject.toml`.
 
@@ -4699,30 +4699,30 @@ Package the application tested in Part 1 A as a Docker image, run it with Gunico
 
 #### 1. Verify the Dockerfile
 
-The [project Dockerfile](./project/udacity_server_deployment_exercises_cd0157/Dockerfile) now matches the literal historical rubric: `python:stretch`, pip installation from `requirements.txt`, and the required Gunicorn entry point:
+The [project Dockerfile](./project/udacity_server_deployment_exercises_cd0157/Dockerfile) uses Python 3.13 slim and locked uv dependencies, preserving the required Gunicorn entry point:
 
 ```dockerfile
-# Literal historical course rubric. This tag contains Python 3.7.4 on Debian Stretch.
-# Use for this compatibility exercise; the OS and Python runtime are end-of-life.
-FROM python:stretch
+# Post-approval runtime: match Python 3.13 used locally and in CodeBuild.
+FROM python:3.13-slim
 
-# Disable bytecode files and stream logs immediately.
+# Pin uv and install the project's locked runtime dependencies without pip.
+COPY --from=ghcr.io/astral-sh/uv:0.13.7 /uv /usr/local/bin/uv
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    UV_PYTHON_DOWNLOADS=never \
+    PATH="/app/.venv/bin:$PATH"
 
 WORKDIR /app
-# pip 24.0 supports Python 3.7; requirements.txt pins compatible application dependencies.
-COPY requirements.txt ./
-RUN python -m pip install --no-cache-dir pip==24.0 \
-    && python -m pip install --no-cache-dir -r requirements.txt
+COPY pyproject.toml uv.lock ./
+RUN uv sync --locked --no-dev --no-cache
 COPY main.py .
 
-# Keep the rubric's exact Gunicorn entry point.
+# Preserve the Gunicorn app and port contract.
 ENTRYPOINT ["gunicorn", "-b", ":8080", "main:APP"]
 ```
 
-- `python -m pip install --no-cache-dir -r requirements.txt` installs pinned Python 3.7-compatible runtime dependencies. pip 24.0 is used because it supports Python 3.7.
-- Gunicorn is installed into the image's Python environment; no uv executable or development tools are copied into the runtime image.
+- uv 0.13.7 is copied from its versioned image. `UV_PYTHON_DOWNLOADS=never` ensures uv uses the image's Python 3.13.
+- `uv sync --locked --no-dev --no-cache` creates `/app/.venv` with runtime dependencies only. Its `bin` directory is added to `PATH` so Gunicorn uses that environment.
 - `main:APP` loads `APP` from `main.py`; `-b :8080` makes the Web Server Gateway Interface (WSGI) server listen on container port `8080`.
 - The existing `.dockerignore` excludes the host's `.venv`, Git metadata, caches, and `.env*` files from the build context.
 
@@ -5490,7 +5490,7 @@ The left-hand `JWT_SECRET` is the build environment variable; the right-hand val
 
 - **`install`:** Starts Docker, selects Python 3.13, downloads and checksum-verifies kubectl, updates `PATH`, installs uv 0.13.7 and jq, and checks the AWS CLI v2 already supplied by the build image. AWS CLI v2 provides EKS token authentication, replacing the video's separate `aws-iam-authenticator` download.
 - **`pre_build`:** Generates an image tag, substitutes it for `CONTAINER_IMAGE` in the manifest, logs Docker into ECR with `get-login-password`, sets `KUBECONFIG`, and runs `uv sync --locked`.
-- **`build`:** Builds the rubric-compatible Stretch image with pip and pinned requirements, then runs all 14 tests inside a disposable container using that actual Python 3.7.4 image. Test dependencies are not added to the published runtime image.
+- **`build`:** Builds the Python 3.13 slim image with `uv sync --locked --no-dev --no-cache`, then runs all 14 tests in a disposable container using `uv sync --locked && uv run --locked python -m pytest /app/test_main.py`. Development dependencies are installed only in that disposable container, not the published runtime image.
 - **`post_build`:** Pushes the image to ECR, updates kubeconfig using the deployment role, applies `simple_jwt_api.yml`, and writes `build.json` as the output artifact.
 
 CodeBuild logs show these commands in execution order. Keep the explanatory comments and diagnostic `echo` statements: version and path output help connect a logged failure to its buildspec command. Avoid echoing secret values.
@@ -5659,7 +5659,7 @@ Open [`buildspec.yml`](./project/udacity_server_deployment_exercises_cd0157/buil
 pre_build:
   commands:
     # Keep the existing tag, image substitution, ECR login, and kubeconfig commands above.
-    # Replaces pip install -r requirements.txt; includes the pytest development dependency.
+    # Includes the locked pytest development dependency.
     - uv sync --locked
     - uv run --locked python -m pytest test_main.py
 ```
@@ -5705,9 +5705,11 @@ Finish with passing tests in the submitted repository. The intentional failure i
 
 ### Submission
 
+> **Accepted submission archive:** the project passed review on 2026-11-12. This section preserves the legacy submission handoff and its evidence. The current working branch was subsequently restored to Python 3.13 and uv only; see the [project activity log](./project/README.md#post-approval-python-313-and-uv-restoration--2026-11-12). References to requirements files below apply to the accepted ZIP/commits, not the current branch.
+
 Submit the implementation, its live API address, and enough evidence for a reviewer to check every [rubric criterion](#project-rubric). The checklist below is based on this project's instructions; use the repository-link or upload format actually offered by your course's submission page.
 
-**Prepared 2026-11-12 resubmission:** [download the source ZIP](./project/submission-2026-11-12.zip). It includes the literal Stretch/pip Docker implementation, `.env.example`, reviewer notes, and fresh successful deployment evidence. The private `.env` is excluded. The published source/evidence commit is `3bd35dd0bfafe96b92a79f3cc899d1f9425bd9c8`; verified application commit `4d4fe962a89eb097f4ef0406a26d81e3b8ee4e47` passed 14 host and 14 actual-runtime tests. A recording is not a criterion in the rubric reproduced below; no video timestamps are claimed.
+**Accepted 2026-11-12 resubmission:** source/evidence commit [`3bd35dd0bfafe96b92a79f3cc899d1f9425bd9c8`](https://github.com/mxagar/udacity_server_deployment_exercises_cd0157/tree/3bd35dd0bfafe96b92a79f3cc899d1f9425bd9c8) includes the literal Stretch/pip Docker implementation, `.env.example`, reviewer notes, and successful deployment evidence. A source ZIP was prepared for submission, excluding the private `.env`; that ZIP is no longer present in this checkout. The verified application commit `4d4fe962a89eb097f4ef0406a26d81e3b8ee4e47` passed 14 host and 14 actual-runtime tests. A recording is not a criterion in the rubric reproduced below; no video timestamps are claimed.
 
 #### 1. Prepare the handoff
 
@@ -5959,7 +5961,7 @@ Use this rubric to check the required submission evidence. The optional suggesti
 | Run the Docker image and verify its endpoints. | The container starts correctly, and all three endpoints respond as described in the README. |
 | Set the required environment variable. | Configure the JSON Web Token (JWT) signing secret, `JWT_SECRET`, correctly in a file such as `.env` and supply it to the container. |
 
-**Resubmission note (2026-11-12):** the project now literally uses `python:stretch` and pip installation from `requirements.txt`, preserving the exact Gunicorn entry point. The prior modern-base-image exception is resolved. Host tooling remains Python 3.13/uv, and CodeBuild also tests the actual Python 3.7.4 runtime image.
+**Accepted submission history (2026-11-12):** the approved snapshot used `python:stretch` and pip installation from `requirements.txt`, preserving the exact Gunicorn entry point. After approval, the owner requested Python 3.13 slim and uv only. The original rubric above is preserved; current runtime instructions and new evidence describe that subsequent modernization.
 
 #### Using CodePipeline and CodeBuild to Deploy
 

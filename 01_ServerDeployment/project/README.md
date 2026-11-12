@@ -4,6 +4,149 @@ This README is the project's requirements checklist, execution guide, and activi
 
 I forked the starter/original repo to [https://github.com/mxagar/webapp_deployment_guide](https://github.com/mxagar/webapp_deployment_guide).
 
+## Post-approval Python 3.13 and uv restoration — 2026-11-12
+
+The user confirmed the submission passed, then requested Python 3.13 and uv-only dependency management, including a real deployment and endpoint verification. The accepted source commits, previous reviewer notes, and original evidence snapshots are retained as history. This section records the subsequent changes and checks; the legacy review section below describes the earlier accepted snapshot. The previously generated `submission-2026-11-12.zip` is absent from this checkout; no new archive was created or substituted for the accepted submission.
+
+Changes in the fork:
+
+- Restored `requires-python = ">=3.13,<3.14"` and modern Flask/PyJWT/Gunicorn/pytest ranges. Ran `uv lock --upgrade`; `uv.lock` is the single dependency lock. Removed `requirements.txt` and `requirements-dev.txt`.
+- Docker uses `python:3.13-slim`, copies uv 0.13.7, disables managed Python downloads, and runs `uv sync --locked --no-dev --no-cache`. `/app/.venv/bin` is on `PATH`; Gunicorn's entry point and port remain unchanged.
+- CodeBuild retains its Python 3.13/uv host test gate and now uses uv inside a disposable copy of the built image to run the same tests before publication. Development tools are installed only in that disposable container. The publication guard, EKS Secret reference, readiness probe, rollout wait, and explicit-secret startup checks remain in place.
+- Updated the fork README and current course-project instructions; marked `SUBMISSION.md` and the Submission handoff section as accepted historical records. The existing private `.env`, Parameter Store value, and Kubernetes Secret were not changed.
+
+Verification and command log (from the fork unless stated otherwise):
+
+1. Inspected Git status, branch, remote and files with `git status --short`, `git log`, `git remote -v`, `Get-Content`, and `rg`; fetched `origin master` and confirmed baseline `3bd35dd0bfafe96b92a79f3cc899d1f9425bd9c8`. Read verification/review guidance and consulted official uv Docker guidance through Context7. AWS identity and cluster metadata checks confirmed the intended account and an active EKS cluster. Initial uv cache, AWS credential-cache and Docker pipe sandbox failures were retried with approved access. An initial tool output was lost during context compaction, so local tests/build were explicitly rerun rather than assumed successful.
+2. Applied changes using `apply_patch`; used the temporary `.tmp_python313_docs.py` helper from the parent repository to update only the course's project section. Regenerated the lock, ran the host suite, built the runtime image, and tested it:
+
+   ```powershell
+   uv lock --upgrade
+   uv run --locked pytest
+   docker build -t simple-flask-project:python313 .
+   $testFile = Join-Path (Get-Location) 'test_main.py'
+   docker run --rm --entrypoint sh `
+     --mount "type=bind,source=$testFile,target=/app/test_main.py,readonly" `
+     simple-flask-project:python313 `
+     -c 'uv sync --locked && uv run --locked python -m pytest /app/test_main.py'
+   ```
+
+   Host: **14 passed**, Python 3.13.5. Actual image: **14 passed**, Python 3.13.18/uv 0.13.7. Image ID: `sha256:75e83b9ff38f71c2f14c47cb34f2c039c1d69e87b8fb2d9f21a80196ea509ab6`. Saved [runtime output](./udacity_server_deployment_exercises_cd0157/evidence/python313-uv-runtime-tests.txt) with `Tee-Object`.
+
+3. Started a temporary loopback-only container using the existing ignored `.env`:
+
+   ```powershell
+   docker run --detach --rm --name simple-flask-python313-check `
+     --env-file .env -p 127.0.0.1:18082:8080 simple-flask-project:python313
+   docker exec simple-flask-python313-check python --version
+   docker exec simple-flask-python313-check uv --version
+   $base = 'http://127.0.0.1:18082'
+   $health = Invoke-RestMethod -Uri "$base/"
+   $auth = Invoke-RestMethod -Method Post -Uri "$base/auth" `
+     -ContentType 'application/json' `
+     -Body '{"email":"runtime-check@example.com","password":"exercise-only"}'
+   $contents = Invoke-RestMethod -Uri "$base/contents" `
+     -Headers @{ Authorization = "Bearer $($auth.token)" }
+   # Assert email/exp/nbf, then check missing and invalid tokens return 401.
+   try { Invoke-RestMethod -Uri "$base/contents" } catch {
+     [int]$_.Exception.Response.StatusCode
+   }
+   try {
+     Invoke-RestMethod -Uri "$base/contents" `
+       -Headers @{ Authorization = 'Bearer invalid-token' }
+   } catch { [int]$_.Exception.Response.StatusCode }
+   Remove-Variable auth, contents
+   docker stop simple-flask-python313-check
+   ```
+
+   At 15:11 Budapest time, health/auth/verified claims passed; missing and invalid tokens returned **401**. Saved [sanitized local results](./udacity_server_deployment_exercises_cd0157/evidence/python313-uv-local-checks.json) with `ConvertTo-Json`/`Set-Content`; no token or secret values are recorded. Stopping the temporary container auto-removed it.
+
+4. Parsed `buildspec.yml` using `uv run --locked --with pyyaml python -c ...`; verified every phase command parses as a string and the folded Docker test command invokes uv correctly. `git diff --check` passed in both repositories. Independently checked the published image composition with `docker run --rm --entrypoint python simple-flask-project:python313 -c ...`: Python 3.13, Flask/PyJWT/Gunicorn available, pytest absent. Requested an independent read-only review of the changes.
+5. Read the live baseline using these PowerShell commands. AWS CLI paths/profile/region are process-local; no global configuration or signing secrets were changed:
+
+   ```powershell
+   $aws = 'C:\Program Files\Amazon\AWSCLIV2\aws.exe'
+   & $aws sts get-caller-identity --profile deployment-course
+   & $aws eks describe-cluster --name simple-jwt-api `
+     --profile deployment-course --region eu-central-1 `
+     --query 'cluster.{Status:status,Version:version}' --output json
+   & $aws codepipeline list-pipeline-executions `
+     --pipeline-name simple-jwt-api-pipeline-CodePipelineGitHub-upDPTJrhUW5M `
+     --max-results 3 --profile deployment-course --region eu-central-1 `
+     --query 'pipelineExecutionSummaries[].{Id:pipelineExecutionId,Status:status,Commit:sourceRevisions[0].revisionId}' `
+     --output json
+   $env:PATH = 'C:\Program Files\Amazon\AWSCLIV2;' + $env:PATH
+   $env:AWS_PROFILE = 'deployment-course'
+   $env:AWS_DEFAULT_REGION = 'eu-central-1'
+   kubectl get deployment simple-jwt-api -o json
+   ```
+
+   Baseline: cluster active on Kubernetes 1.37; pipeline `8be75e26-30cf-4c72-84d4-8dbd58eeae01` succeeded for `3bd35dd0`; three ready replicas used that commit's image. Only selected deployment/image metadata was displayed, not environment values or Secret data.
+
+6. Independent review found no Critical, Important, or Minor issues. Committed and pushed the tested fork changes as `8794a65d681eeeedd59f3f149034e77facc64554`:
+
+   ```powershell
+   git add -- Dockerfile README.md SUBMISSION.md buildspec.yml pyproject.toml uv.lock `
+     requirements.txt requirements-dev.txt evidence/python313-uv-local-checks.json `
+     evidence/python313-uv-runtime-tests.txt
+   git diff --cached --check
+   git commit -m 'Restore Python 3.13 and uv-only runtime after approval'
+   $env:GIT_TERMINAL_PROMPT = '0'
+   git -c credential.helper= -c credential.helper=store `
+     -c credential.interactive=never push origin master
+   git rev-parse HEAD
+   ```
+
+   The explicit file list included removal of the old requirements exports and excluded `.env`. The per-command credential-helper override avoided the previously observed interactive manager hang. The push triggers the existing GitHub-source CodePipeline; no stack, EKS cluster, role, or secret recreation is needed.
+
+7. The GitHub push automatically started pipeline **`c5d9124c-e808-4a92-993a-471784faacb5`** and CodeBuild **`simple-jwt-api-pipeline:035779e3-4b75-45bd-a9dc-b82d4ae77e8a`** for `8794a65d`. Both succeeded. Build ran **15:16:17–15:17:27 Europe/Budapest**. Selected CloudWatch messages confirm **14 host tests and 14 actual-image tests passed**, uv performed the container dependency synchronization, the Python 3.13 slim image was built, and Kubernetes rollout completed.
+
+   Monitored using these PowerShell commands (profile/region/path from step 5):
+
+   ```powershell
+   $pipeline = 'simple-jwt-api-pipeline-CodePipelineGitHub-upDPTJrhUW5M'
+   $execution = 'c5d9124c-e808-4a92-993a-471784faacb5'
+   $buildId = & $aws codebuild list-builds-for-project `
+     --project-name simple-jwt-api-pipeline --sort-order DESCENDING `
+     --profile deployment-course --region eu-central-1 --query 'ids[0]' --output text
+   & $aws codepipeline get-pipeline-execution --pipeline-name $pipeline `
+     --pipeline-execution-id $execution --profile deployment-course --region eu-central-1 `
+     --query 'pipelineExecution.{Id:pipelineExecutionId,Status:status,Revisions:artifactRevisions[].revisionId}' `
+     --output json
+   & $aws codebuild batch-get-builds --ids $buildId `
+     --profile deployment-course --region eu-central-1 `
+     --query 'builds[0].{Id:id,Status:buildStatus,Phase:currentPhase,Commit:resolvedSourceVersion,Started:startTime,Ended:endTime,LogGroup:logs.groupName,LogStream:logs.streamName,Phases:phases[].{Name:phaseType,Status:phaseStatus,Contexts:contexts}}' `
+     --output json
+   $logQuery = "events[?contains(message, '14 passed') || contains(message, 'platform linux -- Python') || contains(message, 'python:3.13-slim') || contains(message, 'Running command docker run') || contains(message, 'Running command kubectl') || contains(message, 'successfully rolled out') || contains(message, 'Phase complete: PRE_BUILD') || contains(message, 'Phase complete: BUILD') || contains(message, 'Phase complete: POST_BUILD')].message"
+   & $aws logs get-log-events --log-group-name '/aws/codebuild/simple-jwt-api-pipeline' `
+     --log-stream-name '035779e3-4b75-45bd-a9dc-b82d4ae77e8a' --start-from-head `
+     --profile deployment-course --region eu-central-1 --query $logQuery --output json
+   kubectl rollout status deployment/simple-jwt-api --namespace default --timeout=180s
+   kubectl get deployment simple-jwt-api --namespace default -o json
+   kubectl exec deployment/simple-jwt-api --namespace default -- python --version
+   kubectl exec deployment/simple-jwt-api --namespace default -- uv --version
+   kubectl get service simple-jwt-api --namespace default -o json
+   ```
+
+8. At **15:18:41 Budapest time**, independently asserted the running image tag ends in `.8794a65d`, with **three updated/ready/available replicas**. A running Pod reported **Python 3.13.18 and uv 0.13.7**. Repeated the health/auth/contents and missing/invalid-token checks from step 3 with `$base` set to `http://a801c89a3b3334c9aa490f41d56834f7-6753305.eu-central-1.elb.amazonaws.com`. All passed. Stored selected metadata, log messages, runtime versions, and boolean/status results in [cloud evidence](./udacity_server_deployment_exercises_cd0157/evidence/python313-uv-2026-11-12.json). The temporary `.tmp_python313_cloud.ps1` helper used `ConvertFrom-Json`/`ConvertTo-Json`/`Set-Content` to collect and assert those results, without recording credentials, secret values, or bearer tokens. Reading the old ZIP path with `Get-Item` confirmed it is absent; updated the archival handoff text accordingly.
+
+9. Revalidated the saved JSON assertions and whitespace checks, confirmed `.env` is still ignored with `git check-ignore .env`, and removed both temporary documentation/collection helpers with `Remove-Item -LiteralPath`. Published the new cloud evidence and current README as **`12702b2a8779c6022d51422ab324b8b3eb12ad62`**:
+
+   ```powershell
+   git add -- README.md evidence/python313-uv-2026-11-12.json
+   git diff --cached --check
+   git commit -m 'Record Python 3.13 uv deployment verification'
+   $env:GIT_TERMINAL_PROMPT = '0'
+   git -c credential.helper= -c credential.helper=store `
+     -c credential.interactive=never push origin master
+   git rev-parse HEAD
+   git status --short
+   ```
+
+   The fork working tree is clean. This second push contains documentation/evidence only and triggers the same pipeline with identical application/configuration files. The parent course/project README edits and submodule pointer remain local in the guide repository for its next commit.
+
+10. Confirmed GitHub's `master` is `12702b2a` with `git ls-remote origin refs/heads/master`. Polled the same CodePipeline/CodeBuild commands until the source poll detected that commit. Final pipeline **`0eb3bede-89fd-4ae7-ba3c-b58560fc1e1a`** and build **`simple-jwt-api-pipeline:60cf9899-b1da-4e98-9d46-0895fd206e38`** both succeeded. Repeated step 7's `get-pipeline-execution`, `batch-get-builds`, and `logs get-log-events` with those IDs; the final log query selected `14 passed` and `successfully rolled out` messages. Both 14-test runs passed again. Repeated rollout/deployment and all public API assertions from steps 7–8. At **15:24:14 Budapest time**, three updated/ready replicas used image tag `udacity_server_deployment_exercises_cd0157.master..2026-11-12.14.22.51.12702b2a`; health/auth/claims passed and missing/invalid tokens returned **401**. Final `git diff --check` and status inspection completed; temporary helpers are gone and no private environment/secret files were staged. No additional source push is needed, so the final verification does not start another pipeline.
+
 ## Review follow-up — 2026-11-12
 
 Reviewer feedback requested a file-based local-secret example, literal Docker rubric compatibility or approval for the modern alternative, and independently verifiable EKS access. The user chose **strict `python:stretch` compatibility** and confirmed there is no recording. A recording is not listed in the reproduced rubric; video timestamps were an optional reviewer suggestion.
