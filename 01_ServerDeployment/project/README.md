@@ -629,24 +629,336 @@ Record the URL, statuses, and sanitized responses. Also verify missing/invalid t
 
 ### 10. Clean up after review
 
-Before deletion, record physical resource names, including retained ECR repository, S3 artifact bucket, and helper Lambda/log groups. Stop further source pushes and wait for builds to finish.
+**Decommission runbook prepared on 2026-11-12. No deletion has been performed by the assistant.** The user requested instructions after passing review. Run the following numbered steps in order in **PowerShell**, checking each result before continuing. These commands permanently remove this dedicated project's cloud deployment and artifacts. Preserve the Git repository and committed evidence for your portfolio; do not push changes to the monitored branch during teardown.
 
-```bash
-aws cloudformation delete-stack --stack-name "$STACK_NAME"
-aws cloudformation wait stack-delete-complete --stack-name "$STACK_NAME"
-kubectl delete service simple-jwt-api --namespace default --wait=true
-kubectl delete deployment simple-jwt-api --namespace default --wait=true
+#### 10.1. Confirm the account and save resource names
+
+The read-only inventory found the following. Names are specific to this deployment; refresh them if the infrastructure has been recreated.
+
+| Resource | Verified identity | Cleanup purpose |
+| --- | --- | --- |
+| EKS cluster | `simple-jwt-api` | Remove the billable control plane. |
+| Nodes | Two `t3.medium` instances: `i-0c69d344212daecc9`, `i-01bb5a0be65219dcf` | Remove compute and their public IP usage through eksctl. |
+| Node disks | Two 80 GiB gp3 volumes: `vol-0c21ba0bfd01489ae`, `vol-01c4cfc5521e2b2a5` | Normally removed with the nodes; verify no retained disks. |
+| NAT gateway / Elastic IP | `nat-090a6a24234a897eb` / `eipalloc-08c76a988ae51f18f` | Remove NAT and allocated public IPv4 charges through the cluster stack. |
+| Dedicated VPC | `vpc-081c6f9c41bc96ed6` | Owned by the eksctl cluster stack; no VPC endpoints were found. |
+| Classic Load Balancer | `a801c89a3b3334c9aa490f41d56834f7` | Delete its Kubernetes Service first. |
+| Pipeline stack / CodeBuild project | `simple-jwt-api-pipeline` | Remove CodePipeline, CodeBuild and the helper Lambda/stack roles. |
+| Retained ECR repository | `simple-jwt-api-pipeline-ecrdockerrepository-esyamizthgc4` | Delete separately to remove stored-image charges. |
+| Retained S3 bucket | `simple-jwt-api-pipeline-codepipelineartifactbucket-3kglq64nbphy` | Delete separately to remove artifact storage. Versioning is currently unset. |
+| Log groups | `/aws/codebuild/simple-jwt-api-pipeline`, `/aws/lambda/simple-jwt-api-pipeline-CustomResourceLambda-tsNxl7XGetpD` | Delete stored logs after preserving desired evidence. |
+| Manual IAM role | `UdacityFlaskDeployCBKubectlRole`, inline policy `eks-describe` | Optional free-resource cleanup after deleting the cluster/pipeline. |
+| Parameter Store | `JWT_SECRET`, Standard SecureString, `alias/aws/ssm` | Optional cleanup; [standard parameter storage has no additional charge](https://aws.amazon.com/systems-manager/pricing/). Keep the AWS-managed KMS key. |
+
+No application PVCs/PVs, node-volume snapshots, ALBs/NLBs, or EKS control-plane log groups were found. This inventory covers this project in `eu-central-1`; earlier labs and other regions require their own review.
+
+```powershell
+$env:PATH = 'C:\Program Files\Amazon\AWSCLIV2;' + $env:PATH
+$env:AWS_PROFILE = 'deployment-course'
+$env:AWS_DEFAULT_REGION = 'eu-central-1'
+$env:AWS_PAGER = ''
+$StackName = 'simple-jwt-api-pipeline'
+$ClusterName = 'simple-jwt-api'
+$PipelineName = 'simple-jwt-api-pipeline-CodePipelineGitHub-upDPTJrhUW5M'
+$RepositoryName = 'simple-jwt-api-pipeline-ecrdockerrepository-esyamizthgc4'
+$ArtifactBucket = 'simple-jwt-api-pipeline-codepipelineartifactbucket-3kglq64nbphy'
+$VpcId = 'vpc-081c6f9c41bc96ed6'
+$LoadBalancerName = 'a801c89a3b3334c9aa490f41d56834f7'
+
+aws --version
+aws sso login --profile $env:AWS_PROFILE
+$account = aws sts get-caller-identity --query Account --output text
+if ($LASTEXITCODE -ne 0 -or $account -ne '077073585279') {
+    throw 'Stop: failed identity check or wrong AWS account.'
+}
+aws cloudformation list-stack-resources --stack-name $StackName `
+  --query 'StackResourceSummaries[].{Logical:LogicalResourceId,Type:ResourceType,Id:PhysicalResourceId}' `
+  --output table
+aws cloudformation list-stacks `
+  --query "StackSummaries[?contains(StackName, 'simple-jwt-api') && StackStatus!='DELETE_COMPLETE'].{Name:StackName,Status:StackStatus}" `
+  --output table
 ```
 
-Verify the load balancer is removed before deleting the dedicated cluster:
+SSO login can be skipped while the existing session is valid. Every AWS command below uses the profile and region set above. After each native command, check for an error and stop if it failed; PowerShell does not automatically stop on a nonzero native exit code. Save any wanted build logs/artifacts now, before steps 10.5–10.6 delete them.
 
-```bash
-eksctl delete cluster --name "$CLUSTER_NAME" --region "$AWS_DEFAULT_REGION" --profile "$AWS_PROFILE" --wait
+#### 10.2. Prevent new builds, then delete the pipeline stack
+
+Disable new inbound Build-stage transitions. Existing builds can continue; let them finish before deleting the stack. Inspect recent builds and stop a running build only if necessary.
+
+```powershell
+aws codepipeline disable-stage-transition --pipeline-name $PipelineName `
+  --stage-name Build --transition-type Inbound --reason 'Project decommissioning'
+aws codepipeline list-pipeline-executions --pipeline-name $PipelineName `
+  --max-results 5 --query 'pipelineExecutionSummaries[].{Id:pipelineExecutionId,Status:status}' `
+  --output table
+$buildIds = aws codebuild list-builds-for-project --project-name $StackName `
+  --sort-order DESCENDING --max-items 100 --query ids --output json | ConvertFrom-Json
+if ($buildIds) {
+    aws codebuild batch-get-builds --ids $buildIds `
+      --query 'builds[].{Id:id,Status:buildStatus,Phase:currentPhase}' --output table
+}
+# Only if an actual build is still IN_PROGRESS and you want to cancel it:
+# aws codebuild stop-build --id 'COPY_THE_RUNNING_BUILD_ID_HERE'
 ```
 
-Inspect remaining CloudFormation stacks, EC2 instances, EBS volumes, NAT gateways, and public IP allocations. Delete unwanted retained ECR images/repository, all S3 artifact versions/delete markers and bucket, and exercise CloudWatch log groups. Record each console action or actual CLI command and its result. Stack deletion alone does not prove cleanup is complete.
+Once no build is running, delete the stack. This also removes its CodePipeline/CodeBuild service roles and custom-resource Lambda. Keep the separate manual kubectl role until cluster teardown is complete.
 
-When unused, remove the manual IAM role/inline policy, Parameter Store parameter, exercise GitHub token, and local secret files. If keeping the cluster, remove only the obsolete role mapping and project Secret. Never delete shared resources merely because their names resemble the course examples.
+```powershell
+aws cloudformation delete-stack --stack-name $StackName
+if ($LASTEXITCODE -ne 0) { throw 'Pipeline stack deletion request failed.' }
+aws cloudformation wait stack-delete-complete --stack-name $StackName
+if ($LASTEXITCODE -ne 0) {
+    aws cloudformation describe-stack-events --stack-name $StackName `
+      --query 'StackEvents[?ResourceStatus==`DELETE_FAILED`].{Resource:LogicalResourceId,Reason:ResourceStatusReason}' `
+      --output table
+    throw 'Resolve the stack deletion failure before continuing.'
+}
+```
+
+The template explicitly sets `DeletionPolicy: Retain` on ECR and S3. They survive this step and are handled in 10.5. A deleted CloudFormation stack remains visible in deletion history without running resources of its own. [CloudFormation retention documentation](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-attribute-deletionpolicy.html).
+
+#### 10.3. Delete the application and wait for its load balancer
+
+Use the cluster administrator profile, without assuming the now-deleted CodeBuild service role. AWS requires deleting LoadBalancer Services and Ingresses while the cluster can still clean up their AWS resources. [EKS deletion prerequisites](https://docs.aws.amazon.com/eks/latest/userguide/delete-cluster.html).
+
+```powershell
+aws eks update-kubeconfig --name $ClusterName `
+  --region $env:AWS_DEFAULT_REGION --profile $env:AWS_PROFILE
+if ($LASTEXITCODE -ne 0) { throw 'Cannot configure cluster access.' }
+kubectl get services,ingresses,pvc --all-namespaces
+kubectl get pv
+# Save names for optional local kubeconfig cleanup later.
+$config = kubectl config view --minify -o json | ConvertFrom-Json
+$KubeContext = $config.'current-context'
+$KubeCluster = $config.contexts[0].context.cluster
+$KubeUser = $config.contexts[0].context.user
+
+kubectl delete service simple-jwt-api --namespace default --ignore-not-found=true --wait=true
+if ($LASTEXITCODE -ne 0) { throw 'Service deletion failed.' }
+kubectl delete deployment simple-jwt-api --namespace default --ignore-not-found=true --wait=true
+if ($LASTEXITCODE -ne 0) { throw 'Deployment deletion failed.' }
+
+# Classic ELB has no load-balancers-deleted waiter. Poll the exact name.
+$deadline = (Get-Date).AddMinutes(10)
+do {
+    $remaining = aws elb describe-load-balancers `
+      --query "LoadBalancerDescriptions[?LoadBalancerName=='$LoadBalancerName'].LoadBalancerName" `
+      --output text
+    if ($LASTEXITCODE -ne 0) { throw 'Load-balancer lookup failed.' }
+    if ([string]::IsNullOrWhiteSpace(($remaining -join ''))) { break }
+    if ((Get-Date) -gt $deadline) { throw 'Load balancer still exists; resolve before deleting EKS.' }
+    Start-Sleep -Seconds 10
+} while ($true)
+```
+
+The Service disappearing from Kubernetes does not by itself prove the AWS load balancer is gone. The poll verifies AWS directly. If it times out, inspect the Service/controller deletion events and the matching EC2 Load Balancer. If the Service is gone and its exact orphaned Classic ELB remains, delete only that confirmed project load balancer with `aws elb delete-load-balancer --load-balancer-name $LoadBalancerName`, then rerun the poll. Remove any additional project LoadBalancer Services or Ingresses before the next step; do not remove cluster-internal Services. There is no application data volume to back up in the verified deployment.
+
+#### 10.4. Delete the dedicated EKS cluster and nodes
+
+```powershell
+eksctl version
+eksctl delete cluster --name $ClusterName `
+  --region $env:AWS_DEFAULT_REGION --profile $env:AWS_PROFILE --wait
+if ($LASTEXITCODE -ne 0) { throw 'Cluster teardown failed; inspect the eksctl/CloudFormation errors.' }
+```
+
+`--wait` is important: it reports deletion failures rather than just submitting the request. For this eksctl-created cluster, the operation removes the nodegroup and cluster stacks, including their owned VPC/NAT/Elastic IP resources. The expected stack names are `eksctl-simple-jwt-api-nodegroup-ng-c0c4948d` and `eksctl-simple-jwt-api-cluster`. Verify the results in 10.7. [eksctl deletion guidance](https://eksctl.io/usage/creating-and-managing-clusters/).
+
+If deletion is blocked by a Pod Disruption Budget, and this entire dedicated cluster is being discarded, retry the same command with `--disable-nodegroup-eviction --wait`. If EKS explicitly reports deletion protection, inspect `aws eks describe-cluster --name $ClusterName --query 'cluster.deletionProtection'`; when true, use `aws eks update-cluster-config --name $ClusterName --no-deletion-protection`, wait for that update to complete, then retry. Do not delete node instances manually while a nodegroup/Auto Scaling group still owns them; it can create replacements. Stopping nodes or scaling to zero leaves the billable EKS control plane and network resources in place.
+
+#### 10.5. Delete retained image and artifact storage
+
+The following removes every image in this project's ECR repository and every object in its artifact bucket. Committed source/evidence remains in Git.
+
+```powershell
+aws ecr delete-repository --repository-name $RepositoryName --force
+if ($LASTEXITCODE -ne 0) { throw 'ECR deletion failed.' }
+aws s3api get-bucket-versioning --bucket $ArtifactBucket
+```
+
+The checked bucket has no enabled versioning, so use:
+
+```powershell
+aws s3 rb "s3://$ArtifactBucket" --force
+if ($LASTEXITCODE -ne 0) { throw 'Artifact bucket deletion failed; inspect versioning/remaining uploads.' }
+```
+
+If versioning has since been enabled or suspended, `s3 rb --force` does not remove historical object versions. Instead, open **S3 → this exact bucket → Empty**, permanently empty all versions/delete markers, then run `aws s3api delete-bucket --bucket $ArtifactBucket`. The CLI-only equivalent is below; run it only for that versioned project bucket, before `delete-bucket`. [S3 deletion behavior](https://docs.aws.amazon.com/cli/latest/reference/s3/rb.html).
+
+<details>
+<summary>Conditional: permanently empty a versioned project bucket using PowerShell and AWS CLI</summary>
+
+```powershell
+$deleteFile = Join-Path ([System.IO.Path]::GetTempPath()) ('project-s3-delete-' + [guid]::NewGuid() + '.json')
+try {
+    do {
+        $page = aws s3api list-object-versions --bucket $ArtifactBucket `
+          --max-keys 1000 --no-paginate --output json | ConvertFrom-Json
+        if ($LASTEXITCODE -ne 0) { throw 'Cannot list S3 versions.' }
+        $objects = @(
+            @($page.Versions) + @($page.DeleteMarkers) |
+              Where-Object { $null -ne $_ } |
+              ForEach-Object { @{ Key = $_.Key; VersionId = $_.VersionId } }
+        )
+        if ($objects.Count -eq 0) { break }
+        $json = @{ Objects = $objects; Quiet = $true } | ConvertTo-Json -Depth 5
+        [System.IO.File]::WriteAllText($deleteFile, $json, [System.Text.UTF8Encoding]::new($false))
+        $result = aws s3api delete-objects --bucket $ArtifactBucket `
+          --delete "file://$deleteFile" --output json | ConvertFrom-Json
+        if ($LASTEXITCODE -ne 0 -or $result.Errors) { throw 'S3 version deletion failed.' }
+        # Delete each first page, then list again until no versions remain.
+    } while ($true)
+} finally {
+    if (Test-Path -LiteralPath $deleteFile) { Remove-Item -LiteralPath $deleteFile }
+}
+aws s3api delete-bucket --bucket $ArtifactBucket
+```
+
+</details>
+
+For either bucket type, inspect unfinished multipart uploads if storage remains or deletion is blocked. While the bucket still exists, run:
+
+```powershell
+$uploads = @(aws s3api list-multipart-uploads --bucket $ArtifactBucket `
+  --query Uploads --output json | ConvertFrom-Json)
+foreach ($upload in $uploads) {
+    if ($null -ne $upload) {
+        aws s3api abort-multipart-upload --bucket $ArtifactBucket `
+          --key $upload.Key --upload-id $upload.UploadId
+    }
+}
+# Once objects/versions/uploads are empty, retry the appropriate bucket deletion.
+```
+
+#### 10.6. Delete stored CloudWatch logs
+
+The CodeBuild and helper-Lambda log groups outlive their parent resources. Save any desired evidence first. No EKS control-plane log group was found; check for one if you enabled logging later.
+
+```powershell
+aws logs delete-log-group --log-group-name '/aws/codebuild/simple-jwt-api-pipeline'
+aws logs delete-log-group `
+  --log-group-name '/aws/lambda/simple-jwt-api-pipeline-CustomResourceLambda-tsNxl7XGetpD'
+aws logs describe-log-groups --log-group-name-prefix '/aws/eks/simple-jwt-api/' `
+  --query 'logGroups[].logGroupName' --output table
+# Only if that exact project group exists and its logs are no longer needed:
+# aws logs delete-log-group --log-group-name '/aws/eks/simple-jwt-api/cluster'
+```
+
+Deleting logs removes their storage rather than merely stopping new log writes. Missing-resource errors are expected if a group has already been removed; an access-denied response is not evidence of deletion.
+
+#### 10.7. Verify the cost-bearing resources are gone
+
+Run these read-only checks after the wait operations complete. A missing cluster/VPC or empty matching resource list is expected. For instances, `terminated` is acceptable while AWS still retains their history. A NAT gateway may remain listed temporarily with state `deleted`; `available` or `deleting` means teardown is not yet fully verified. No nodes, NAT gateway, Elastic IP, retained disks, images, artifacts, or logs should remain billable for this project.
+
+```powershell
+aws eks list-clusters --query "clusters[?@=='$ClusterName']" --output json
+aws cloudformation list-stacks `
+  --query "StackSummaries[?contains(StackName, 'simple-jwt-api') && StackStatus!='DELETE_COMPLETE'].{Name:StackName,Status:StackStatus}" `
+  --output table
+aws ec2 describe-instances --filters "Name=vpc-id,Values=$VpcId" `
+  --query 'Reservations[].Instances[].{Id:InstanceId,State:State.Name}' --output table
+aws ec2 describe-nat-gateways --filter "Name=vpc-id,Values=$VpcId" `
+  --query 'NatGateways[].{Id:NatGatewayId,State:State}' --output table
+aws ec2 describe-addresses --filters 'Name=allocation-id,Values=eipalloc-08c76a988ae51f18f' `
+  --query 'Addresses[].{Allocation:AllocationId,Association:AssociationId}' --output table
+aws ec2 describe-volumes `
+  --filters 'Name=volume-id,Values=vol-0c21ba0bfd01489ae,vol-01c4cfc5521e2b2a5' `
+  --query 'Volumes[].{Id:VolumeId,State:State,GiB:Size}' --output table
+aws ec2 describe-snapshots --owner-ids self `
+  --filters 'Name=volume-id,Values=vol-0c21ba0bfd01489ae,vol-01c4cfc5521e2b2a5' `
+  --query 'Snapshots[].{Id:SnapshotId,Volume:VolumeId}' --output table
+aws ec2 describe-vpc-endpoints --filters "Name=vpc-id,Values=$VpcId" `
+  --query 'VpcEndpoints[].{Id:VpcEndpointId,Type:VpcEndpointType}' --output table
+aws ec2 describe-vpcs --filters "Name=vpc-id,Values=$VpcId" --query 'Vpcs[].VpcId'
+aws elb describe-load-balancers `
+  --query "LoadBalancerDescriptions[?VPCId=='$VpcId'].LoadBalancerName" --output table
+aws elbv2 describe-load-balancers `
+  --query "LoadBalancers[?VpcId=='$VpcId'].LoadBalancerArn" --output table
+aws ecr describe-repositories --repository-names $RepositoryName
+aws s3api head-bucket --bucket $ArtifactBucket
+aws logs describe-log-groups --log-group-name-prefix '/aws/codebuild/simple-jwt-api-pipeline' `
+  --query 'logGroups[].logGroupName' --output table
+aws logs describe-log-groups --log-group-name-prefix '/aws/lambda/simple-jwt-api-pipeline' `
+  --query 'logGroups[].logGroupName' --output table
+```
+
+For ECR expect `RepositoryNotFoundException`; for the bucket expect a not-found/404 response, not a permissions error. Review **Billing → Cost Explorer**, filtered to this project/services and `eu-central-1`, then check again the following day because billing data lags. Review other regions and earlier course labs separately. CloudFormation deletion history and VPC/subnet/security-group metadata are not themselves ongoing compute/storage charges.
+
+If anything remains, resolve `DELETE_FAILED` stack events first. For a confirmed orphan outside any remaining owning stack/nodegroup, these are targeted fallback commands; run only the relevant line after inspection, not as an extra teardown pass:
+
+```powershell
+# Orphan NAT: wait for deletion before releasing its now-unassociated EIP.
+aws ec2 delete-nat-gateway --nat-gateway-id nat-090a6a24234a897eb
+aws ec2 wait nat-gateway-deleted --nat-gateway-ids nat-090a6a24234a897eb
+aws ec2 release-address --allocation-id eipalloc-08c76a988ae51f18f
+# Only if listed as available/unattached after the nodes are gone:
+# aws ec2 delete-volume --volume-id vol-0c21ba0bfd01489ae
+# aws ec2 delete-volume --volume-id vol-01c4cfc5521e2b2a5
+# Only if the snapshot check finds an unwanted project snapshot:
+# aws ec2 delete-snapshot --snapshot-id 'COPY_CONFIRMED_PROJECT_SNAPSHOT_ID'
+```
+
+NAT deletion alone does not release its Elastic IP. [NAT gateway deletion guidance](https://docs.aws.amazon.com/vpc/latest/userguide/nat-gateway-working-with.html). Do not delete account-wide EBS volumes, snapshots, IPs, or other projects' resources using broad name/tag matches.
+
+#### 10.8. Optional: remove unused secrets, access configuration, and local artifacts
+
+These are housekeeping steps after the billable infrastructure is gone. The verified manual IAM role has one inline policy and no attached managed policies. Delete it only if it was dedicated to this exercise:
+
+```powershell
+aws ssm delete-parameter --name JWT_SECRET
+aws iam list-role-policies --role-name UdacityFlaskDeployCBKubectlRole
+aws iam list-attached-role-policies --role-name UdacityFlaskDeployCBKubectlRole
+aws iam delete-role-policy --role-name UdacityFlaskDeployCBKubectlRole --policy-name eks-describe
+aws iam delete-role --role-name UdacityFlaskDeployCBKubectlRole
+```
+
+The cluster deletion removes its Kubernetes Secret and role mappings automatically. `JWT_SECRET` in Parameter Store is separate and remains until the command above deletes it. Do not delete the AWS-managed `alias/aws/ssm` key, shared AWS profiles, or the administrator/SSO roles used by other work.
+
+If the GitHub personal access token was created only for this pipeline, revoke that token in **GitHub → Settings → Developer settings → Personal access tokens → the project token → Delete/Revoke**. Do not revoke a shared GitHub integration or remove the repository/evidence simply to stop AWS charges.
+
+Optionally remove the saved Kubernetes context/user/cluster entries, after checking the captured names from 10.3 are specific to this deleted cluster and are not shared by another context:
+
+```powershell
+kubectl config get-contexts
+kubectl config delete-context $KubeContext
+kubectl config delete-cluster $KubeCluster
+kubectl config delete-user $KubeUser
+```
+
+From the fork's directory, optional local cleanup is:
+
+```powershell
+docker container ls -a
+docker image ls
+# Only if these containers/images exist and you no longer want them:
+# docker stop simple-flask-container
+# docker rm simple-flask-container
+# docker image rm simple-flask-project:python313
+# docker image rm simple-flask-project:review-fixes
+# docker image rm simple-flask-project:latest
+# docker image rm eks-flask-project:local
+# Remove the private local signing-secret file only if no longer needed:
+# Remove-Item -LiteralPath .env
+Remove-Item Env:JWT_SECRET -ErrorAction SilentlyContinue
+Remove-Variable TOKEN, auth, contents -ErrorAction SilentlyContinue
+```
+
+Local Docker images and `.env` do not incur AWS charges. Keep `.env.example`, source, `uv.lock`, and committed evidence. Do not use account-wide deletion or `docker system prune -a` for this targeted cleanup.
+
+#### 10.9. Record actual completion
+
+This is a planned checklist until you run it. Record each command/console action, completion timestamp, actual result, and any failure/retry here; never record secret values. The assistant's runbook preparation performed only read-only AWS/Kubernetes inventory and local documentation edits.
+
+- [ ] Pipeline transitions disabled; no build left running; pipeline stack deleted.
+- [ ] Service/Deployment removed; AWS load balancer absence verified.
+- [ ] eksctl cluster/nodegroup stacks deleted; control plane and nodes gone.
+- [ ] NAT gateway deleted; Elastic IP released; node disks/snapshots checked.
+- [ ] Retained ECR repository and S3 artifacts/bucket removed.
+- [ ] Project CloudWatch log groups removed or consciously retained with storage costs.
+- [ ] Optional Parameter Store/manual IAM/GitHub/local cleanup completed or consciously retained.
+- [ ] Next-day billing and other course labs/regions reviewed.
+
+Preparation log (2026-11-12, assistant): read existing cleanup instructions and the CloudFormation template with `Get-Content`/`rg`; inspected Git status; consulted official EKS/eksctl, CloudFormation, S3, ECR, SSM and NAT deletion documentation through web/Context7. Read live resources using `sts get-caller-identity`, `cloudformation list-stack-resources` (pipeline and cluster stacks), `cloudformation list-stacks`, `eks describe-cluster` (VPC/logging/deletion-protection metadata), `ssm describe-parameters` (metadata only), `ec2 describe-instances`, `ec2 describe-nat-gateways`, `ec2 describe-vpc-endpoints`, `ec2 describe-volumes`, `ec2 describe-snapshots`, `elb describe-load-balancers`, `elbv2 describe-load-balancers`, `s3api get-bucket-versioning`, `logs describe-log-groups` (the three project prefixes), `iam list-role-policies`, `iam list-attached-role-policies`, `codepipeline list-pipeline-executions`, `kubectl get service,ingress,pvc --all-namespaces`, and `kubectl get pv`. Queries selected resource metadata, never secret values. An attempted `aws elb wait help` could not render because the Windows help pager looked for `cat`; Classic ELB deletion verification therefore uses explicit read-only polling. Applied the runbook with `apply_patch`; checked PowerShell block syntax and Git whitespace. No AWS deletion/update command from this runbook has been executed, no IAM/secret changes made, and nothing pushed.
 
 ## Activity log
 

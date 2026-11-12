@@ -5801,6 +5801,8 @@ The EKS deployment will remain available through review.
 
 ### Cleaning Up
 
+For this deployment's verified resource names, full PowerShell teardown sequence, leftover-resource checks, and optional IAM/token/local cleanup, follow the [project decommission runbook](./project/README.md#10-clean-up-after-review). It was prepared after the project passed on 2026-11-12; the assistant has not executed any deletion. The general Bash/PowerShell guidance below remains available.
+
 Clean up **after submission and reviewer feedback**, once the reviewer no longer needs the application URL.
 
 - **Required to stop ongoing costs:** remove the project's pipeline, load balancer, EKS cluster and nodes, then retained images, artifacts, and logs. Compute and networking are the main priority; stored data can also incur charges.
